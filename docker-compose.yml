@@ -1,0 +1,11 @@
+services:
+  packcomply:
+    build: .
+    ports:
+      - "4000:4000"
+    environment:
+      - PACKCOMPLY_SECRET=${PACKCOMPLY_SECRET:-dev-only-compose-secret-change-me}
+    volumes:
+      - packcomply-data:/data
+volumes:
+  packcomply-data:

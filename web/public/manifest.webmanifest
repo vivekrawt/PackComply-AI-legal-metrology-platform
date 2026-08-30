@@ -1,0 +1,10 @@
+{
+  "name": "PackComply AI",
+  "short_name": "PackComply",
+  "description": "Legal Metrology compliance inspection platform (decision support)",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f7fa",
+  "theme_color": "#12233d",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
