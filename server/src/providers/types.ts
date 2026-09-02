@@ -29,9 +29,14 @@ export interface AssetInput {
 }
 
 export interface QualityResult extends ProviderMeta {
-  scores: Record<string, number>;    // blur, glare, occlusion, resolution, textScale, curvature, clipping, completeness (0..1, higher = better)
+  // blur, exposure, glare, occlusion, resolution, textScale, curvature, clipping,
+  // completeness, orientation, labelVisibility (0..1, higher = better)
+  scores: Record<string, number>;
   overall: number;
-  reasonCodes: string[];             // e.g. GLARE_HIGH, FACE_INCOMPLETE — image quality, NEVER legal codes
+  // e.g. BLUR_HIGH, TOO_DARK, LABEL_NOT_VISIBLE, ORIENTATION_WRONG, FACE_INCOMPLETE.
+  // Capture quality only — NEVER legal codes. DUPLICATE_IMAGE is not produced here:
+  // exact duplicates are refused deterministically at upload by hash comparison.
+  reasonCodes: string[];
   recapture: { recommended: boolean; guidance: string[] };
 }
 

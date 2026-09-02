@@ -41,28 +41,84 @@ docker compose up --build                       # → http://localhost:4000 (ser
 
 Optional: `cp server/.env.example server/.env` and adjust.
 
+## Roles
+
+Three roles, enforced server-side on every route from a single matrix
+(`server/src/modules/auth/permissions.ts`). The web UI renders navigation and buttons from the
+permission list the server returns with `/auth/me`, so it can never offer an action the API refuses.
+
+| Role | What it is for | Can | Cannot |
+|---|---|---|---|
+| **user** | Does the work — the field officer using the product | Create inspections, capture/upload evidence, run processing, correct declarations, run the compliance check, disposition findings, export reports | Approve overrides, amend a signed report, issue notices, read the audit log, author rules, administer users, **delete anything** |
+| **admin** | Reviews the work | Read all casework in the organization, disposition findings, approve second-level overrides, finalize and amend reports, issue notices, order re-inspections, read the audit log | Create inspections, upload evidence, edit declarations, administer users or configuration, **delete anything** |
+| **super_admin** | Full write **and delete** | Everything above, plus rule drafting/approval/publication, user administration, system configuration, and deletion of inspections, evidence, unpublished rule versions and accounts | — (holds every permission by construction) |
+
+Two deliberate consequences:
+
+- **Segregation of duties.** `admin` cannot create or alter the record it signs off, so "who did the work"
+  and "who approved it" are always different people. `user` cannot approve its own high-severity override —
+  the second-level approval must come from an `admin` or `super_admin`.
+- **Deletion is soft and attributed.** Every delete demands a reason, is written to the tamper-evident audit
+  log, and keeps the row (and its evidence hashes) so a previously issued report still verifies. Deleted
+  inspections appear in **Deleted Records** and can be restored. Deleting a *finalized* inspection requires an
+  explicit acknowledgement; a *published* rule version cannot be deleted at all (retire or roll it back).
+  Deleting a user offboards and anonymises the account rather than dropping the row, because the audit chain
+  references that officer.
+
+Finalization by `user` is policy-driven: set the `finalization_policy` config item's `userCanFinalize` to
+`false` to force every report through an `admin` reviewer.
+
 ## Demo accounts (password: `PackComply#2026`)
 
 | E-mail | Role |
 |---|---|
-| inspector@demo.gov.example | Field inspector (Maharashtra/Pune scope) |
-| reviewer@demo.gov.example | Review / senior officer (Maharashtra) |
-| ruleadmin@demo.gov.example / ruleadmin2@demo.gov.example | Legal rule administrators (maker + checker) |
-| analyst@demo.gov.example | Compliance analyst |
-| sysadmin@demo.gov.example | System administrator (cannot alter findings) |
-| auditor@demo.gov.example | Auditor (read-only) |
-| inspector.ka@demo.gov.example | Inspector in Karnataka (scope-isolation demo) |
+| user@demo.gov.example | **user** — field officer (Maharashtra/Pune scope) |
+| admin@demo.gov.example | **admin** — reviewer (organization-wide) |
+| superadmin@demo.gov.example | **super_admin** — full write and delete |
+| superadmin2@demo.gov.example | **super_admin** — second approver (rule maker-checker demo) |
+| user.ka@demo.gov.example | **user** in Karnataka (scope-isolation demo) |
+
+## Field-officer flow (the `user` role)
+
+```
+Upload product images        front · back · top · bottom · left · right   (+ closeup / listing)
+        │                    exact duplicates are refused at upload by SHA-256
+        ▼
+Image quality check          blur · too dark · label visible · orientation · glare ·
+        │                    occlusion · edge clipping · face completeness
+        │                    → per-image recapture guidance; never a legal judgement
+        ▼
+Product image analysis       computer vision (layout regions) ─┐
+        │                    OCR (tesseract, en+hi) → text ────┘
+        ▼
+Structured product data      declarations, normalized + officer-correctable
+        ▼
+Rule engine                  versioned rules, pinned by effective date
+        ▼
+Findings                     passed · failed · needs review · not assessable · not applicable
+        ▼
+Compliance report            overall status + outcome counts · failed rules with citations ·
+                             evidence images and extracted text · SHA-256 verification
+```
+
+The report gives a **status and counts, not a score** (requirement EXT-07): one missing mandatory
+declaration makes a package non-compliant however many other rules pass, so a percentage would
+misrepresent the legal position.
 
 ## Try the end-to-end flow
 
-Sign in as the inspector → **New Inspection** (pick a category; `pan_masala`/`medical_devices`/`edible_oil`
+Sign in as **user@demo.gov.example** → **New Inspection** (pick a category; `pan_masala`/`medical_devices`/`edible_oil`
 trigger overlay routing) → upload PNG/JPEG/PDF evidence with face labels → optionally record a
 **calibration** (without one, font-size checks return **Not Assessable**) → **Run evidence processing** →
 open the **Analysis workbench** → review/correct declarations → **Apply versioned rules** → disposition
-each material finding (overrides need reasons; high-severity overrides need reviewer approval) →
+each material finding (overrides need reasons; high-severity overrides need approval from an admin) →
 **Finalize** → open the **Report** (PDF/DOCX/CSV/JSON/manifest export + hash verification) →
 find it again via **Repository / Search**. Seeded inspections (one finalized, one open, one e-commerce)
 are ready immediately.
+
+Then sign in as **admin@demo.gov.example** to see the same case read-only with the review verbs available
+(and no capture or delete controls), and as **superadmin@demo.gov.example** for user administration, the
+rule library and **Deleted Records**.
 
 ## Real OCR (self-hosted, free, default)
 

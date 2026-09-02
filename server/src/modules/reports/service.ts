@@ -101,6 +101,25 @@ export function buildReportModel(db: DB, inspectionId: string, reportId: string,
         : findings.some((f: any) => ['needs_review', 'not_assessable'].includes(f.effectiveOutcome))
           ? 'review_required'
           : 'compliant',
+      // Counts, deliberately not a score (EXT-07). A rule-pass percentage would read as
+      // partial legality: one missing mandatory declaration makes the package
+      // non-compliant regardless of how many other rules passed. The breakdown tells the
+      // officer how much work is outstanding without implying a degree of compliance.
+      summary: {
+        total: findings.length,
+        passed: findings.filter((f: any) => f.effectiveOutcome === 'passed').length,
+        failed: findings.filter((f: any) => f.effectiveOutcome === 'failed').length,
+        needsReview: findings.filter((f: any) => f.effectiveOutcome === 'needs_review').length,
+        notAssessable: findings.filter((f: any) => f.effectiveOutcome === 'not_assessable').length,
+        notApplicable: findings.filter((f: any) => f.effectiveOutcome === 'not_applicable').length,
+        overridden: findings.filter((f: any) => f.effectiveOutcome !== f.evaluationOutcome).length,
+      },
+      failedRules: findings
+        .filter((f: any) => f.effectiveOutcome === 'failed')
+        .map((f: any) => ({
+          ruleKey: f.ruleKey, title: f.ruleTitle, severity: f.severity,
+          explanation: f.explanation, citation: f.citation, evidenceRefs: f.evidenceRefs,
+        })),
       notes: insp.notes,
     },
     auditAndVerification: {
@@ -117,8 +136,8 @@ export function finalizeInspection(db: DB, user: SessionUser, inspectionId: stri
   if (insp.status === 'finalized' || insp.status === 'closed') throw conflict('Inspection already finalized');
 
   const policy = getFinalizationPolicy(db);
-  if (user.role === 'inspector' && !policy.inspectorCanFinalize) {
-    throw forbidden('Finalization by inspectors is disabled by policy; route to a reviewing officer');
+  if (user.role === 'user' && !policy.userCanFinalize) {
+    throw forbidden('Finalization by field users is disabled by policy; route to a reviewing admin');
   }
   const evalCount = (db.prepare('SELECT COUNT(*) AS c FROM evaluations WHERE inspection_id = ?').get(inspectionId) as any).c;
   if (evalCount === 0) throw unprocessable('Cannot finalize: no rule evaluation has been run');

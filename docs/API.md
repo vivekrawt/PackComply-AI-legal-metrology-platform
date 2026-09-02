@@ -6,12 +6,20 @@ Base path: `/api/v1`. Cookie-session auth (`POST /auth/login`). Every mutation r
 `X-Correlation-Id`. Rate-limited (global + login). All routes enforce role permission **and**
 jurisdictional scope server-side. `Idempotency-Key` header is honored on `POST /inspections/:id/process`.
 
+**Roles.** Three roles — `user` (does the inspection work), `admin` (reviews it; no create/upload/delete)
+and `super_admin` (full write **and** delete). The matrix lives in
+`server/src/modules/auth/permissions.ts` and is enforced per route by `requirePerm`; denials are audited.
+Routes marked **super_admin** below are the destructive verbs, which no other role holds. Deletes are soft
+(the row and its evidence hashes survive so issued reports stay verifiable), always require a reason, and
+are recorded in the hash-chained audit log.
+
 ## Auth
 | Method | Path | Notes |
 |---|---|---|
 | POST | /auth/login | `{email, password}` → sets httpOnly session cookie |
 | POST | /auth/logout | |
-| GET | /auth/me | current user + provider/demo status |
+| GET | /auth/me | current user + provider/demo status + `permissions[]` for the signed-in role |
+| GET | /roles | role catalogue: `{role, label, description, permissions[]}` for `user`, `admin`, `super_admin` |
 
 ## Inspections
 | POST | /inspections | create (type, eventDate, location, sellerName, product{…}) |
@@ -21,13 +29,17 @@ jurisdictional scope server-side. `Idempotency-Key` header is honored on `POST /
 | PUT | /inspections/:id/product | upsert product context |
 | POST | /inspections/:id/waive-view | `{view, reason}` |
 | GET | /inspections/:id/timeline | audit + notices + linked inspections |
-| POST | /inspections/:id/reinspect | linked re-inspection (lineage preserved) |
+| POST | /inspections/:id/reinspect | linked re-inspection (lineage preserved) — `inspection.reinspect` |
+| DELETE | /inspections/:id | **super_admin** · `{reason, force?}` → soft delete; `force` required for a finalized record |
+| POST | /inspections/:id/restore | **super_admin** · undo a soft delete |
+| GET | /inspections/deleted | **super_admin** · recycle bin (the only view that shows deleted rows) |
 
 ## Evidence & processing
 | POST | /inspections/:id/evidence | multipart `files[]` + faceLabel/source/capturedAt/device/gps |
 | POST | /inspections/:id/evidence/url | `{url, marketplace?, seller?, structured?}` |
 | POST | /assets/:id/calibration | `{method, mmPerPx, uncertaintyPct?, instrument?}` |
 | GET | /assets/:id | asset + quality + OCR blocks + layout + calibrations |
+| DELETE | /assets/:id | **super_admin** · `{reason}` → soft delete; refused under legal hold or after finalization |
 | POST | /assets/:id/signed-url | mint short-lived signed content URL |
 | GET | /assets/:id/content | original binary (session+scope or valid signature); integrity-checked |
 | POST | /inspections/:id/process | enqueue quality→OCR→extraction jobs (202; idempotent) |
@@ -68,9 +80,11 @@ jurisdictional scope server-side. `Idempotency-Key` header is honored on `POST /
 | POST | /rules/versions/:id/test | run test pack against this version |
 | GET | /rules/compare?ruleKey&versionA&versionB | outcome diff across versions |
 | POST | /rules/tests | add fixture `{ruleKey, name, fixture, expectedOutcome}` |
+| DELETE | /rules/versions/:id | **super_admin** · `{reason}` → hard delete, unpublished and unused versions only |
 
 ## Administration & audit
-| GET/POST/PATCH | /admin/users | lifecycle (sys_admin) · POST /admin/users/:id/revoke-sessions |
+| GET/POST/PATCH | /admin/users | lifecycle (`admin.users`, super_admin) · POST /admin/users/:id/revoke-sessions |
+| DELETE | /admin/users/:id | **super_admin** · offboards + anonymises + cuts sessions; the row is retained for audit attribution |
 | GET/PUT | /admin/config/:key | versioned config items |
 | GET | /models | model registry |
 | GET | /audit?objectType&objectId&actorId&limit | audit query (itself audited) |

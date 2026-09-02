@@ -27,6 +27,7 @@ export class MockImageQualityProvider implements ImageQualityProvider {
     const s = seedInt(input.sha256);
     const scores = {
       blur: frac(s, 0.55, 0.98),
+      exposure: frac(s >> 1, 0.5, 0.98),      // low = underexposed / too dark
       glare: frac(s >> 2, 0.5, 0.98),
       occlusion: frac(s >> 4, 0.6, 1),
       resolution: frac(s >> 6, 0.6, 1),
@@ -34,12 +35,17 @@ export class MockImageQualityProvider implements ImageQualityProvider {
       curvature: frac(s >> 10, 0.5, 1),
       clipping: frac(s >> 12, 0.7, 1),
       completeness: frac(s >> 14, 0.7, 1),
+      orientation: frac(s >> 16, 0.55, 1),    // low = rotated / upside down
+      labelVisibility: frac(s >> 18, 0.6, 1), // low = declaration panel not legible in frame
     };
     const reasonCodes: string[] = [];
     const guidance: string[] = [];
     if (scores.blur < 0.65) { reasonCodes.push('BLUR_HIGH'); guidance.push('Hold the camera steady and refocus on the label.'); }
+    if (scores.exposure < 0.6) { reasonCodes.push('TOO_DARK'); guidance.push('The frame is underexposed — add light or move out of shadow, then recapture.'); }
     if (scores.glare < 0.6) { reasonCodes.push('GLARE_HIGH'); guidance.push('Tilt the package away from direct light to remove glare.'); }
     if (scores.occlusion < 0.7) { reasonCodes.push('PARTIAL_OCCLUSION'); guidance.push('Ensure no fingers or stickers cover the declarations.'); }
+    if (scores.labelVisibility < 0.7) { reasonCodes.push('LABEL_NOT_VISIBLE'); guidance.push('The declaration panel is not legible in this frame — reframe on the printed label.'); }
+    if (scores.orientation < 0.65) { reasonCodes.push('ORIENTATION_WRONG'); guidance.push('The label appears rotated — hold the package upright so the text reads left to right.'); }
     if (scores.clipping < 0.75) { reasonCodes.push('EDGE_CLIPPED'); guidance.push('Include all edges of this package face in the frame.'); }
     if (scores.completeness < 0.75) { reasonCodes.push('FACE_INCOMPLETE'); guidance.push('Capture the full package face, then add close-ups.'); }
     const overall = Object.values(scores).reduce((a, b) => a + b, 0) / Object.keys(scores).length;

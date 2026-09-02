@@ -10,13 +10,18 @@ import { ErrorText } from '../components/common';
 // this panel would be removed.
 const DEMO_PASSWORD = 'PackComply#2026';
 const DEMO_ACCOUNTS = [
-  { label: 'Field Inspector', email: 'inspector@demo.gov.example', hint: 'create inspections, capture evidence, review findings' },
-  { label: 'Reviewer / Senior Officer', email: 'reviewer@demo.gov.example', hint: 'approve overrides, finalize, notices' },
-  { label: 'Rule Administrator', email: 'ruleadmin@demo.gov.example', hint: 'draft and test legal rule versions' },
-  { label: 'Rule Approver', email: 'ruleadmin2@demo.gov.example', hint: 'independent approval and publication' },
-  { label: 'Compliance Analyst', email: 'analyst@demo.gov.example', hint: 'search, history, analytics (read)' },
-  { label: 'System Administrator', email: 'sysadmin@demo.gov.example', hint: 'users and configuration only' },
-  { label: 'Auditor', email: 'auditor@demo.gov.example', hint: 'read-only oversight and audit log' },
+  {
+    label: 'User — field officer', email: 'user@demo.gov.example',
+    hint: 'Uses the product: open a case, capture the package, run the compliance check, correct declarations.',
+  },
+  {
+    label: 'Admin — reviewer', email: 'admin@demo.gov.example',
+    hint: 'Reviews the work only: dispose findings, approve overrides, finalize reports, issue notices, read the audit log.',
+  },
+  {
+    label: 'Super administrator', email: 'superadmin@demo.gov.example',
+    hint: 'Full write and delete: rule publication, user and configuration administration, record deletion.',
+  },
 ];
 
 export function Login() {

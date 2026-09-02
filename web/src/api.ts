@@ -32,12 +32,34 @@ export const api = {
   postForm: <T>(path: string, form: FormData) => request<T>('POST', path, undefined, form),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
+  del: <T>(path: string, body?: unknown) => request<T>('DELETE', path, body),
 };
 
+export type Role = 'user' | 'admin' | 'super_admin';
+
 export interface User {
-  id: string; email: string; name: string; role: string;
+  id: string; email: string; name: string; role: Role;
   orgId: string; state: string | null; district: string | null; office: string | null;
 }
+
+// Display metadata only. Authority lives in the server's role→permission matrix, which
+// arrives with /auth/me; the UI never decides what a role may do.
+export const ROLE_META: Record<Role, { label: string; short: string; hint: string }> = {
+  user: {
+    label: 'User (field officer)', short: 'User',
+    hint: 'Runs inspections: open a case, capture the package, check the product, correct declarations.',
+  },
+  admin: {
+    label: 'Admin (reviewer)', short: 'Admin',
+    hint: 'Reviews the work: dispose findings, approve overrides, finalize reports, issue notices, read the audit log.',
+  },
+  super_admin: {
+    label: 'Super administrator', short: 'Super admin',
+    hint: 'Full write and delete: rule publication, user and configuration administration, record deletion.',
+  },
+};
+
+export const roleLabel = (role: string) => ROLE_META[role as Role]?.label ?? role;
 
 export const OUTCOME_META: Record<string, { label: string; icon: string }> = {
   passed: { label: 'Compliant', icon: '✓' },

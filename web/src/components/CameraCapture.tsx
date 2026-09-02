@@ -9,7 +9,7 @@ import { ErrorText } from './common';
 // These are CAPTURE-ASSIST heuristics only — they are not the server-side image
 // quality assessment, and they are never a legal or compliance judgement.
 
-const FACES = ['front', 'back', 'side', 'top', 'bottom', 'closeup'];
+const FACES = ['front', 'back', 'top', 'bottom', 'left', 'right', 'closeup'];
 
 // Tunable capture-guidance thresholds (not legal parameters).
 const FOCUS_GOOD = 90, FOCUS_FAIR = 35;

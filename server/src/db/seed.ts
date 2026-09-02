@@ -6,9 +6,8 @@
 import type { DB } from './index.js';
 import { getDb, now } from './index.js';
 import { newId } from '../core/ids.js';
-import { createUser } from '../modules/auth/service.js';
+import { createUser, syncRolePermissions } from '../modules/auth/service.js';
 import type { SessionUser } from '../modules/auth/service.js';
-import { ROLE_PERMISSIONS } from '../modules/auth/permissions.js';
 import { createInspection } from '../modules/inspections/service.js';
 import { ingestFileEvidence, ingestUrlEvidence, addCalibration } from '../modules/evidence/service.js';
 import { enqueueJob, drainJobs } from '../modules/processing/queue.js';
@@ -49,27 +48,27 @@ export function seed(db: DB) {
   const t = now();
 
   // --- Permissions matrix -> table (informational mirror; checks use code matrix)
-  const insPerm = db.prepare('INSERT OR IGNORE INTO role_permissions (role, permission) VALUES (?, ?)');
-  for (const [role, perms] of Object.entries(ROLE_PERMISSIONS)) for (const p of perms) insPerm.run(role, p);
+  syncRolePermissions(db);
 
   // --- Organization tree (fictional)
   const orgId = 'org_demo';
   db.prepare("INSERT INTO organizations (id, name, kind, created_at) VALUES (?, 'Demo Legal Metrology Directorate (FICTIONAL)', 'agency', ?)").run(orgId, t);
 
-  // --- Users (demo accounts, one per role + scope-isolation account)
+  // --- Users (demo accounts: one per role, plus a second super admin so the
+  //     maker-checker rule on rule publication can be demonstrated, plus a
+  //     different-state user account that proves scope isolation).
   const mkUser = (email: string, name: string, role: any, state?: string, district?: string) =>
     createUser(db, { email, name, password: DEMO_PASSWORD, role, orgId, state, district });
-  const inspectorId = mkUser('inspector@demo.gov.example', 'Asha Kulkarni (Demo Inspector)', 'inspector', 'Maharashtra', 'Pune');
-  const reviewerId = mkUser('reviewer@demo.gov.example', 'Rohan Mehta (Demo Reviewer)', 'reviewer', 'Maharashtra');
-  const ruleAdminId = mkUser('ruleadmin@demo.gov.example', 'Priya Nair (Demo Rule Admin)', 'rule_admin');
-  const ruleAdmin2Id = mkUser('ruleadmin2@demo.gov.example', 'Vikram Rao (Demo Rule Approver)', 'rule_admin');
-  mkUser('analyst@demo.gov.example', 'Demo Analyst', 'analyst');
-  mkUser('sysadmin@demo.gov.example', 'Demo System Administrator', 'sys_admin');
-  mkUser('auditor@demo.gov.example', 'Demo Auditor', 'auditor');
-  mkUser('inspector.ka@demo.gov.example', 'Demo Inspector (Karnataka)', 'inspector', 'Karnataka', 'Bengaluru Urban');
+  const userId = mkUser('user@demo.gov.example', 'Asha Kulkarni (Demo User)', 'user', 'Maharashtra', 'Pune');
+  const adminId = mkUser('admin@demo.gov.example', 'Rohan Mehta (Demo Admin / Reviewer)', 'admin', 'Maharashtra');
+  const superAdminId = mkUser('superadmin@demo.gov.example', 'Priya Nair (Demo Super Administrator)', 'super_admin');
+  const superAdmin2Id = mkUser('superadmin2@demo.gov.example', 'Vikram Rao (Demo Super Administrator, second approver)', 'super_admin');
+  mkUser('user.ka@demo.gov.example', 'Demo User (Karnataka)', 'user', 'Karnataka', 'Bengaluru Urban');
 
-  const inspector: SessionUser = { id: inspectorId, email: 'inspector@demo.gov.example', name: 'Asha Kulkarni', role: 'inspector', orgId, state: 'Maharashtra', district: 'Pune', office: null };
-  const reviewer: SessionUser = { id: reviewerId, email: 'reviewer@demo.gov.example', name: 'Rohan Mehta', role: 'reviewer', orgId, state: 'Maharashtra', district: null, office: null };
+  const ruleAdminId = superAdminId;
+  const ruleAdmin2Id = superAdmin2Id;
+  const inspector: SessionUser = { id: userId, email: 'user@demo.gov.example', name: 'Asha Kulkarni', role: 'user', orgId, state: 'Maharashtra', district: 'Pune', office: null };
+  const reviewer: SessionUser = { id: adminId, email: 'admin@demo.gov.example', name: 'Rohan Mehta', role: 'admin', orgId, state: 'Maharashtra', district: null, office: null };
 
   // --- Model registry (mock components clearly labeled)
   const insModel = db.prepare(
@@ -350,7 +349,7 @@ export function seed(db: DB) {
 
   // --- Config
   db.prepare("INSERT INTO config_items (key, value_json, version, updated_at) VALUES ('finalization_policy', ?, 1, ?)")
-    .run(JSON.stringify({ inspectorCanFinalize: true, secondApprovalSeverities: ['high'] }), t);
+    .run(JSON.stringify({ userCanFinalize: true, secondApprovalSeverities: ['high'] }), t);
 
   logger.info('seed: users, rules and tests created');
 }
@@ -364,8 +363,8 @@ export async function seedDemoInspections(db: DB) {
     const r = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
     return { id: r.id, email: r.email, name: r.name, role: r.role, orgId: r.org_id, state: r.state, district: r.district, office: r.office };
   };
-  const inspector = u('inspector@demo.gov.example');
-  const reviewer = u('reviewer@demo.gov.example');
+  const inspector = u('user@demo.gov.example');
+  const reviewer = u('admin@demo.gov.example');
 
   // 1) Complete physical inspection → processed → evaluated → dispositioned → finalized.
   const i1 = createInspection(db, inspector, {

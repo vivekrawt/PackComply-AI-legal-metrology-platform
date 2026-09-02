@@ -6,7 +6,7 @@ import { validateBody } from '../middleware/validate.js';
 import {
   listRuleSets, listRuleVersions, getRuleVersion, createDraft, updateDraft,
   submitVersion, approveVersion, publishVersion, retireVersion, rollbackToVersion,
-  runTestPack, compareVersions, addRuleTest, listRuleSources,
+  runTestPack, compareVersions, addRuleTest, listRuleSources, deleteVersion,
 } from '../modules/rules/service.js';
 
 export const rulesRouter = Router();
@@ -44,6 +44,11 @@ rulesRouter.post('/rules/versions', requireAuth, requirePerm('rule.draft'), vali
 
 rulesRouter.patch('/rules/versions/:id', requireAuth, requirePerm('rule.draft'), (req, res) => {
   res.json(updateDraft(getDb(), req.user!, req.params.id, req.body));
+});
+
+// Deletion of an unpublished version (DEL-01, super_admin only).
+rulesRouter.delete('/rules/versions/:id', requireAuth, requirePerm('rule.delete'), (req, res) => {
+  res.json(deleteVersion(getDb(), req.user!, req.params.id, req.body?.reason ?? ''));
 });
 
 rulesRouter.post('/rules/versions/:id/submit', requireAuth, requirePerm('rule.submit'), (req, res) => {

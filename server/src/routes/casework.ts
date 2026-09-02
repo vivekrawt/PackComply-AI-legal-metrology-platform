@@ -7,6 +7,7 @@ const ah = (fn: (req: Request, res: Response, next: NextFunction) => Promise<unk
   (req: Request, res: Response, next: NextFunction) => { fn(req, res, next).catch(next); };
 import { getDb } from '../db/index.js';
 import { requireAuth, requirePerm } from '../middleware/auth.js';
+import { roleHas } from '../modules/auth/permissions.js';
 import { validateBody } from '../middleware/validate.js';
 import { config } from '../core/config.js';
 import { badRequest, forbidden, notFound } from '../core/errors.js';
@@ -15,10 +16,11 @@ import { assertInScope, scopeWhere } from '../modules/auth/service.js';
 import {
   createInspection, updateInspection, getInspection, listInspections, upsertProduct,
   waiveView, coverageStatus, duplicateSuggestions, caseTimeline, INSPECTION_TYPES,
+  deleteInspection, restoreInspection, listDeletedInspections,
 } from '../modules/inspections/service.js';
 import {
   ingestFileEvidence, ingestUrlEvidence, addCalibration, getAssetContent,
-  listInspectionAssets, assetRowToDto,
+  listInspectionAssets, assetRowToDto, deleteAsset,
 } from '../modules/evidence/service.js';
 import { enqueueJob } from '../modules/processing/queue.js';
 import { listDeclarations, correctDeclaration, listCorrections } from '../modules/declarations/service.js';
@@ -72,6 +74,11 @@ caseworkRouter.get('/inspections', requireAuth, requirePerm('inspection.read'), 
       q: q.q, limit: q.limit ? Number(q.limit) : undefined, offset: q.offset ? Number(q.offset) : undefined,
     }),
   });
+});
+
+// Recycle bin — must be declared before '/inspections/:id' so it is not read as an id.
+caseworkRouter.get('/inspections/deleted', requireAuth, requirePerm('inspection.delete'), (req, res) => {
+  res.json({ inspections: listDeletedInspections(getDb(), req.user!) });
 });
 
 caseworkRouter.get('/inspections/:id', requireAuth, requirePerm('inspection.read'), (req, res) => {
@@ -131,7 +138,38 @@ caseworkRouter.get('/inspections/:id/timeline', requireAuth, requirePerm('inspec
   res.json(caseTimeline(db, req.params.id));
 });
 
-caseworkRouter.post('/inspections/:id/reinspect', requireAuth, requirePerm('inspection.create'), (req, res) => {
+// ---- Deletion (DEL-01) ------------------------------------------------------
+// Only super_admin holds these permissions. Deletes are soft and always carry a
+// reason, so the audit chain and any issued report stay verifiable afterwards.
+const deleteBody = z.object({ reason: z.string().min(3), force: z.boolean().optional() });
+
+caseworkRouter.delete(
+  '/inspections/:id',
+  requireAuth, requirePerm('inspection.delete'), validateBody(deleteBody),
+  (req, res) => {
+    const db = getDb();
+    assertInScope(db, req.user!, req.params.id);
+    res.json(deleteInspection(db, req.user!, req.params.id, req.body, req.correlationId));
+  },
+);
+
+caseworkRouter.post('/inspections/:id/restore', requireAuth, requirePerm('inspection.delete'), (req, res) => {
+  res.json(restoreInspection(getDb(), req.user!, req.params.id, req.correlationId));
+});
+
+caseworkRouter.delete(
+  '/assets/:id',
+  requireAuth, requirePerm('evidence.delete'), validateBody(z.object({ reason: z.string().min(3) })),
+  (req, res) => {
+    const db = getDb();
+    const a = db.prepare('SELECT inspection_id FROM evidence_assets WHERE id = ?').get(req.params.id) as any;
+    if (!a) throw notFound('Evidence asset not found');
+    assertInScope(db, req.user!, a.inspection_id);
+    res.json(deleteAsset(db, req.user!, req.params.id, req.body.reason, req.correlationId));
+  },
+);
+
+caseworkRouter.post('/inspections/:id/reinspect', requireAuth, requirePerm('inspection.reinspect'), (req, res) => {
   const db = getDb();
   assertInScope(db, req.user!, req.params.id);
   res.status(201).json(createReinspection(db, req.user!, req.params.id, req.body?.findingId));
@@ -344,8 +382,8 @@ caseworkRouter.post(
     const f = db.prepare('SELECT inspection_id FROM findings WHERE id = ?').get(req.params.id) as any;
     if (!f) throw notFound('Finding not found');
     assertInScope(db, req.user!, f.inspection_id);
-    if (req.body.action === 'override' && !['inspector', 'reviewer'].includes(req.user!.role)) {
-      throw forbidden('Only inspecting/reviewing officers may override findings');
+    if (req.body.action === 'override' && !roleHas(req.user!.role, 'finding.override')) {
+      throw forbidden('Only officers with override authority may override a finding');
     }
     res.json(disposeFinding(db, req.user!, req.params.id, req.body, req.correlationId));
   },
@@ -359,7 +397,7 @@ caseworkRouter.post('/dispositions/:id/approve', requireAuth, requirePerm('findi
 // ---- Annotations & notices --------------------------------------------------
 caseworkRouter.post(
   '/inspections/:id/annotations',
-  requireAuth, requirePerm('inspection.edit'),
+  requireAuth, requirePerm('inspection.annotate'),
   validateBody(z.object({
     assetId: z.string().optional(), kind: z.enum(['rect', 'note', 'measure']),
     geometry: z.unknown().optional(), text: z.string().optional(),
@@ -409,7 +447,7 @@ caseworkRouter.get('/inspections/:id/report', requireAuth, requirePerm('report.r
 
 caseworkRouter.post(
   '/reports/:id/amend',
-  requireAuth, requirePerm('report.finalize'),
+  requireAuth, requirePerm('report.amend'),
   validateBody(z.object({ reason: z.string().min(3) })),
   (req, res) => {
     const db = getDb();

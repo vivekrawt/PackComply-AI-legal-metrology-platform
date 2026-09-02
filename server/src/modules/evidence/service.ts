@@ -9,7 +9,12 @@ import { recordAudit } from '../audit/service.js';
 import type { SessionUser } from '../auth/service.js';
 import { sha256Hex } from '../../core/crypto.js';
 
-const FACE_LABELS = ['front', 'back', 'side', 'top', 'bottom', 'closeup', 'listing', 'other'];
+// Six package faces plus the non-face captures. 'side' predates left/right and is kept
+// so existing evidence and checklists stay valid.
+const FACE_LABELS = [
+  'front', 'back', 'top', 'bottom', 'left', 'right',
+  'side', 'closeup', 'listing', 'other',
+];
 
 function detectMagic(buf: Buffer): string | null {
   if (buf.length < 8) return null;
@@ -49,6 +54,27 @@ export async function ingestFileEvidence(
 
   // Immutable original: content-addressed write-once storage + hash (VIS-01).
   const { sha256, storageKey } = objectStore.put(file.buffer);
+
+  // Duplicate-image gate: the same bytes already captured on this case is a capture
+  // mistake (the officer re-uploaded a photo, or the camera fired twice). Refuse it here
+  // rather than letting it through to OCR, where it would produce a second set of
+  // declarations for one physical face and inflate the evidence bundle.
+  const dupe = db.prepare(
+    'SELECT id, face_label, original_name FROM evidence_assets WHERE inspection_id = ? AND sha256 = ? AND deleted_at IS NULL',
+  ).get(inspectionId, sha256) as any;
+  if (dupe) {
+    recordAudit(db, {
+      actorId: user.id, actorLabel: user.email, action: 'evidence.upload', outcome: 'denied',
+      objectType: 'inspection', objectId: inspectionId,
+      after: { reason: 'duplicate_image', sha256, existingAssetId: dupe.id, filename: file.originalname },
+      correlationId,
+    });
+    throw conflict(
+      `Duplicate image: these exact bytes were already captured on this inspection as ` +
+      `"${dupe.original_name ?? dupe.id}"${dupe.face_label ? ` (${dupe.face_label})` : ''}. ` +
+      `Capture a new photo of this face instead.`,
+    );
+  }
   const id = newId('ev');
   const t = now();
   db.prepare(
@@ -131,8 +157,31 @@ export function getAssetContent(db: DB, assetId: string): { buf: Buffer; mime: s
 }
 
 export function listInspectionAssets(db: DB, inspectionId: string) {
-  return (db.prepare('SELECT * FROM evidence_assets WHERE inspection_id = ? ORDER BY created_at').all(inspectionId) as any[])
-    .map(assetRowToDto);
+  return (db.prepare(
+    'SELECT * FROM evidence_assets WHERE inspection_id = ? AND deleted_at IS NULL ORDER BY created_at',
+  ).all(inspectionId) as any[]).map(assetRowToDto);
+}
+
+// Deletion (super_admin only, DEL-01). Soft delete again: the SHA-256 stays on the row
+// so a previously issued report still verifies against the evidence it cites. Assets
+// under legal hold, and assets belonging to a finalized inspection, are refused.
+export function deleteAsset(db: DB, user: SessionUser, assetId: string, reason: string, correlationId?: string) {
+  const a = db.prepare('SELECT * FROM evidence_assets WHERE id = ?').get(assetId) as any;
+  if (!a) throw notFound('Evidence asset not found');
+  if (a.deleted_at) throw conflict('Evidence asset is already deleted');
+  if (!reason?.trim()) throw badRequest('Deletion requires a reason (it is written to the audit log)');
+  if (a.legal_hold) throw conflict('Evidence is under legal hold and cannot be deleted');
+  assertMutableInspection(db, a.inspection_id);
+  const t = now();
+  db.prepare('UPDATE evidence_assets SET deleted_at = ?, deleted_by = ?, deleted_reason = ? WHERE id = ?')
+    .run(t, user.id, reason, assetId);
+  recordAudit(db, {
+    actorId: user.id, actorLabel: user.email, action: 'evidence.delete',
+    objectType: 'evidence_asset', objectId: assetId,
+    before: { inspectionId: a.inspection_id, faceLabel: a.face_label, sha256: a.sha256 },
+    after: { deletedAt: t, reason }, correlationId,
+  });
+  return { id: assetId, deletedAt: t };
 }
 
 export function assetRowToDto(a: any) {
@@ -149,8 +198,8 @@ export function assetRowToDto(a: any) {
 }
 
 export function assertMutableInspection(db: DB, inspectionId: string) {
-  const insp = db.prepare('SELECT status FROM inspections WHERE id = ?').get(inspectionId) as any;
-  if (!insp) throw notFound('Inspection not found');
+  const insp = db.prepare('SELECT status, deleted_at FROM inspections WHERE id = ?').get(inspectionId) as any;
+  if (!insp || insp.deleted_at) throw notFound('Inspection not found');
   if (insp.status === 'finalized' || insp.status === 'closed') {
     throw conflict('Inspection is finalized; records are immutable. Create an amendment or linked re-inspection.');
   }

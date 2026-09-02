@@ -4,8 +4,8 @@ import { newId } from '../../core/ids.js';
 import { hashPassword, verifyPassword, randomToken } from '../../core/crypto.js';
 import { config } from '../../core/config.js';
 import { recordAudit } from '../audit/service.js';
-import { unauthorized, forbidden } from '../../core/errors.js';
-import type { Role } from './permissions.js';
+import { unauthorized, forbidden, notFound, conflict } from '../../core/errors.js';
+import { ROLE_PERMISSIONS, type Role } from './permissions.js';
 
 export interface SessionUser {
   id: string;
@@ -72,6 +72,41 @@ export function logout(db: DB, sessionId: string, user?: SessionUser) {
   if (user) recordAudit(db, { actorId: user.id, actorLabel: user.email, action: 'auth.logout' });
 }
 
+// Mirror the code-side permission matrix into role_permissions on every boot. The
+// table is informational (checks use the code matrix) but must not drift after a
+// role-model migration, so it is rebuilt rather than inserted-if-missing.
+export function syncRolePermissions(db: DB) {
+  db.transaction(() => {
+    db.prepare('DELETE FROM role_permissions').run();
+    const ins = db.prepare('INSERT OR IGNORE INTO role_permissions (role, permission) VALUES (?, ?)');
+    for (const [role, perms] of Object.entries(ROLE_PERMISSIONS)) for (const p of perms) ins.run(role, p);
+  })();
+}
+
+// Account removal (super_admin only). Users are referenced by inspections, findings,
+// dispositions and the audit chain, so a hard DELETE would either fail on the foreign
+// keys or orphan accountability. Offboarding is the delete: the account is
+// deactivated, anonymised for sign-in, and every session is cut immediately.
+export function deleteUser(db: DB, actor: SessionUser, userId: string) {
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+  if (!target) throw notFound('User not found');
+  if (target.id === actor.id) throw forbidden('You cannot delete your own account');
+  if (target.status === 'offboarded') throw conflict('User is already offboarded');
+  const t = now();
+  db.transaction(() => {
+    db.prepare(
+      `UPDATE users SET status = 'offboarded', email = ?, password_hash = ?, updated_at = ? WHERE id = ?`,
+    ).run(`deleted+${target.id}@invalid.local`, hashPassword(randomToken(24)), t, userId);
+    revokeUserSessions(db, userId);
+  })();
+  recordAudit(db, {
+    actorId: actor.id, actorLabel: actor.email, action: 'user.deleted',
+    objectType: 'user', objectId: userId,
+    before: { email: target.email, role: target.role, status: target.status },
+    after: { status: 'offboarded' },
+  });
+}
+
 export function revokeUserSessions(db: DB, userId: string) {
   db.prepare('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').run(now(), userId);
 }
@@ -95,20 +130,25 @@ function toSessionUser(u: any): SessionUser {
   };
 }
 
-// Scope predicate (IAM-03): a user sees records within their org/state/district/office
-// hierarchy, plus inspections assigned to them. Broad-scope roles (analyst broad scope,
-// auditor approved scope, rule_admin, sys_admin) see the whole organization tree here;
-// finer approved-scope configuration is a config_item.
+// Scope predicate (IAM-03): a `user` sees records within their own
+// org/state/district/office hierarchy plus inspections assigned to them; `admin` and
+// `super_admin` need the whole organization tree to review and administer it. Every
+// caller of this predicate also excludes soft-deleted records, so a deleted inspection
+// disappears from lists, search, analytics and scope checks in one place.
 export function scopeWhere(user: SessionUser, alias = 'i'): { sql: string; params: unknown[] } {
-  if (user.role === 'sys_admin' || user.role === 'auditor' || user.role === 'analyst' || user.role === 'rule_admin') {
-    return { sql: `${alias}.org_id = ?`, params: [user.orgId] };
+  const live = `${alias}.deleted_at IS NULL`;
+  if (user.role === 'admin' || user.role === 'super_admin') {
+    return { sql: `(${alias}.org_id = ? AND ${live})`, params: [user.orgId] };
   }
   const clauses: string[] = [`${alias}.org_id = ?`];
   const params: unknown[] = [user.orgId];
   if (user.state) { clauses.push(`${alias}.state = ?`); params.push(user.state); }
   if (user.district) { clauses.push(`${alias}.district = ?`); params.push(user.district); }
   if (user.office) { clauses.push(`${alias}.office = ?`); params.push(user.office); }
-  return { sql: `((${clauses.join(' AND ')}) OR ${alias}.assigned_to = ?)`, params: [...params, user.id] };
+  return {
+    sql: `(((${clauses.join(' AND ')}) OR ${alias}.assigned_to = ?) AND ${live})`,
+    params: [...params, user.id],
+  };
 }
 
 export function assertInScope(db: DB, user: SessionUser, inspectionId: string) {
@@ -116,5 +156,13 @@ export function assertInScope(db: DB, user: SessionUser, inspectionId: string) {
   const row = db
     .prepare(`SELECT i.id FROM inspections i WHERE i.id = ? AND ${w.sql}`)
     .get(inspectionId, ...w.params);
-  if (!row) throw forbidden('Record is outside your authorized scope');
+  if (row) return;
+  // A soft-deleted record reads as gone, not as forbidden — otherwise the officer who
+  // created it is told they lack authority over their own case. Out-of-scope records
+  // still answer 403, which is what the scope-isolation tests assert.
+  const deleted = db
+    .prepare('SELECT deleted_at FROM inspections WHERE id = ?')
+    .get(inspectionId) as { deleted_at: string | null } | undefined;
+  if (deleted?.deleted_at) throw notFound('Inspection not found');
+  throw forbidden('Record is outside your authorized scope');
 }

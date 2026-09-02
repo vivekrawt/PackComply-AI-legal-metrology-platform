@@ -2,14 +2,14 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { getDb } from '../db/index.js';
 import { now } from '../db/index.js';
-import { login, logout, createUser, revokeUserSessions } from '../modules/auth/service.js';
+import { login, logout, createUser, revokeUserSessions, deleteUser } from '../modules/auth/service.js';
 import { SESSION_COOKIE, requireAuth, requirePerm } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/security.js';
 import { validateBody } from '../middleware/validate.js';
 import { config } from '../core/config.js';
 import { recordAudit, verifyAuditChain } from '../modules/audit/service.js';
 import { badRequest, forbidden, notFound } from '../core/errors.js';
-import { ROLES } from '../modules/auth/permissions.js';
+import { ROLES, ROLE_DESCRIPTIONS, ROLE_LABELS, ROLE_PERMISSIONS } from '../modules/auth/permissions.js';
 import { getConfigItem, setConfigItem } from '../modules/admin/configService.js';
 import { anyMock, mockComponents, providerModelVersions } from '../providers/registry.js';
 
@@ -40,6 +40,18 @@ coreRouter.get('/auth/me', requireAuth, (req, res) => {
   res.json({
     user: req.user, demoProviders: anyMock(), mockComponents: mockComponents(),
     modelVersions: providerModelVersions(),
+    // The client renders navigation from the server's matrix rather than a second
+    // hard-coded copy of it; server-side requirePerm remains the actual gate.
+    permissions: ROLE_PERMISSIONS[req.user!.role] ?? [],
+  });
+});
+
+// Role catalogue for the admin UI (labels, descriptions, permission sets).
+coreRouter.get('/roles', requireAuth, (_req, res) => {
+  res.json({
+    roles: ROLES.map((r) => ({
+      role: r, label: ROLE_LABELS[r], description: ROLE_DESCRIPTIONS[r], permissions: ROLE_PERMISSIONS[r],
+    })),
   });
 });
 
@@ -98,6 +110,13 @@ coreRouter.patch(
     res.json({ ok: true });
   },
 );
+
+// Account deletion (DEL-01, super_admin only). Offboards and anonymises rather than
+// dropping the row — see deleteUser(): the account is referenced by the audit chain.
+coreRouter.delete('/admin/users/:id', requireAuth, requirePerm('admin.users.delete'), (req, res) => {
+  deleteUser(getDb(), req.user!, req.params.id);
+  res.json({ ok: true });
+});
 
 coreRouter.post('/admin/users/:id/revoke-sessions', requireAuth, requirePerm('admin.users'), (req, res) => {
   revokeUserSessions(getDb(), req.params.id);

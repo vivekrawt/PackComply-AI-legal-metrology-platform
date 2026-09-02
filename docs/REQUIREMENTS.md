@@ -53,7 +53,7 @@ labeled deterministic demo provider) | **NOT IMPLEMENTED** (abstraction/config e
 | EXT-04 | Normalize currency/units/numbers/dates/phone/email/country preserving verbatim + provenance | Must | IMPLEMENTED — deterministic normalizers with provenance; ambiguous parses flagged for review |
 | EXT-05 | Merge declarations across faces; detect duplicates/conflicts/continuation | Must | IMPLEMENTED — merge + conflict detection across contributing regions |
 | EXT-06 | Officer corrections (text/type/value/language/bbox/grouping) with original, new, actor, reason, timestamp | Must | IMPLEMENTED |
-| EXT-07 | Confidence exposed, never converted to legal compliance score | Must | IMPLEMENTED — UI + API separate `confidence` from `legalStatus` |
+| EXT-07 | Confidence exposed, never converted to legal compliance score | Must | IMPLEMENTED — UI + API separate `confidence` from `legalStatus`. The report's conclusion carries `overallStatus` plus outcome **counts**, deliberately not a percentage: one missing mandatory declaration is non-compliant however many other rules passed |
 
 ## 8.4 Rule-based compliance engine (REG)
 

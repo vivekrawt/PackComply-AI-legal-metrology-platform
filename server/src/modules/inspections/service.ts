@@ -172,8 +172,71 @@ export function coverageStatus(db: DB, id: string) {
   return { required, captured: [...have].filter(Boolean), waived: [...waived], missing, complete: missing.length === 0 };
 }
 
+// Deletion (super_admin only, DEL-01). Soft delete: the row stays so the audit chain,
+// evidence hashes and any finalized report remain verifiable, but the record is gone
+// from every list, search result, dashboard and scope check. Deleting a finalized
+// inspection needs an explicit acknowledgement — a signed report is a legal artefact.
+export function deleteInspection(
+  db: DB, user: SessionUser, id: string,
+  opts: { reason: string; force?: boolean }, correlationId?: string,
+) {
+  const insp = db.prepare('SELECT * FROM inspections WHERE id = ?').get(id) as any;
+  if (!insp) throw notFound('Inspection not found');
+  if (insp.deleted_at) throw conflict('Inspection is already deleted');
+  if (!opts.reason?.trim()) throw badRequest('Deletion requires a reason (it is written to the audit log)');
+  if ((insp.status === 'finalized' || insp.status === 'closed') && !opts.force) {
+    throw conflict(
+      'This inspection carries a finalized report. Re-send with { force: true } to acknowledge deleting a signed record.',
+    );
+  }
+  const t = now();
+  db.transaction(() => {
+    db.prepare('UPDATE inspections SET deleted_at = ?, deleted_by = ?, deleted_reason = ?, updated_at = ? WHERE id = ?')
+      .run(t, user.id, opts.reason, t, id);
+    db.prepare('UPDATE evidence_assets SET deleted_at = ?, deleted_by = ?, deleted_reason = ? WHERE inspection_id = ? AND deleted_at IS NULL')
+      .run(t, user.id, 'parent inspection deleted', id);
+    db.prepare('DELETE FROM search_index WHERE inspection_id = ?').run(id);
+  })();
+  recordAudit(db, {
+    actorId: user.id, actorLabel: user.email, action: 'inspection.delete',
+    objectType: 'inspection', objectId: id,
+    before: { status: insp.status, eventDate: insp.event_date },
+    after: { deletedAt: t, reason: opts.reason, force: !!opts.force },
+    correlationId,
+  });
+  return { id, deletedAt: t };
+}
+
+export function restoreInspection(db: DB, user: SessionUser, id: string, correlationId?: string) {
+  const insp = db.prepare('SELECT * FROM inspections WHERE id = ?').get(id) as any;
+  if (!insp) throw notFound('Inspection not found');
+  if (!insp.deleted_at) throw conflict('Inspection is not deleted');
+  const t = now();
+  db.transaction(() => {
+    db.prepare('UPDATE inspections SET deleted_at = NULL, deleted_by = NULL, deleted_reason = NULL, updated_at = ? WHERE id = ?').run(t, id);
+    db.prepare("UPDATE evidence_assets SET deleted_at = NULL, deleted_by = NULL, deleted_reason = NULL WHERE inspection_id = ? AND deleted_reason = 'parent inspection deleted'").run(id);
+  })();
+  recordAudit(db, {
+    actorId: user.id, actorLabel: user.email, action: 'inspection.restore',
+    objectType: 'inspection', objectId: id, before: { deletedAt: insp.deleted_at }, correlationId,
+  });
+  return getInspection(db, id);
+}
+
+// Recycle bin for super_admin: the only view in the product that shows deleted rows.
+export function listDeletedInspections(db: DB, user: SessionUser, limit = 100) {
+  return (db.prepare(
+    `SELECT i.id, i.type, i.status, i.event_date, i.location, i.deleted_at, i.deleted_reason, u.email AS deleted_by_email
+     FROM inspections i LEFT JOIN users u ON u.id = i.deleted_by
+     WHERE i.org_id = ? AND i.deleted_at IS NOT NULL ORDER BY i.deleted_at DESC LIMIT ?`,
+  ).all(user.orgId, limit) as any[]).map((i) => ({
+    id: i.id, type: i.type, status: i.status, eventDate: i.event_date, location: i.location,
+    deletedAt: i.deleted_at, deletedReason: i.deleted_reason, deletedBy: i.deleted_by_email,
+  }));
+}
+
 export function getInspection(db: DB, id: string) {
-  const i = db.prepare('SELECT * FROM inspections WHERE id = ?').get(id) as any;
+  const i = db.prepare('SELECT * FROM inspections WHERE id = ? AND deleted_at IS NULL').get(id) as any;
   if (!i) throw notFound('Inspection not found');
   const product = db.prepare('SELECT * FROM products WHERE inspection_id = ?').get(id) as any;
   const seller = i.seller_entity_id
