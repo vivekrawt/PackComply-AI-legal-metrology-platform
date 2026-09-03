@@ -9,7 +9,7 @@ import { Confidence, ErrorText, LegalFlag, MockBadge, OutcomeChip, Section, Seve
 // declaration or finding highlights its evidence region (EXT-02).
 export function Workbench() {
   const { id } = useParams<{ id: string }>();
-  const { user } = React.useContext(AuthContext);
+  const { user, can } = React.useContext(AuthContext);
   const detail = useAsync(() => api.get<any>(`/inspections/${id}`), [id]);
   const decls = useAsync(() => api.get<any>(`/inspections/${id}/declarations`), [id]);
   const findings = useAsync(() => api.get<any>(`/inspections/${id}/findings`), [id]);
@@ -130,7 +130,7 @@ export function Workbench() {
             <Section title={`Extracted declarations (${decls.data?.declarations?.length ?? 0})`}>
               {(decls.data?.declarations ?? []).map((d: any) => (
                 <DeclarationCard key={d.id} d={d} onFocus={() => focusRegion(d.evidenceRegions)}
-                  editable={!finalized && ['inspector', 'reviewer'].includes(user?.role ?? '')} onChanged={() => { decls.reload(); }} />
+                  editable={!finalized && can('declaration.edit')} onChanged={() => { decls.reload(); }} />
               ))}
               {(decls.data?.declarations ?? []).length === 0 && <p className="muted">No declarations extracted yet.</p>}
             </Section>
@@ -139,7 +139,7 @@ export function Workbench() {
               {(findings.data?.findings ?? []).map((f: any) => (
                 <FindingCard key={f.id} f={f} finalized={finalized} busy={busy}
                   onFocus={() => focusRegion(f.evidenceRefs)}
-                  act={act} userRole={user?.role ?? ''} />
+                  act={act} canDispose={can('finding.disposition')} canApprove={can('finding.approve_override')} />
               ))}
               {(findings.data?.findings ?? []).length === 0 && <p className="muted">Run the rule evaluation to generate findings.</p>}
             </Section>
@@ -210,16 +210,17 @@ function DeclarationCard({ d, onFocus, editable, onChanged }: {
   );
 }
 
-function FindingCard({ f, finalized, busy, onFocus, act, userRole }: {
+function FindingCard({ f, finalized, busy, onFocus, act, canDispose, canApprove }: {
   f: any; finalized: boolean; busy: boolean; onFocus: () => void;
-  act: (fn: () => Promise<unknown>) => () => Promise<void>; userRole: string;
+  act: (fn: () => Promise<unknown>) => () => Promise<void>;
+  canDispose: boolean; canApprove: boolean;
 }) {
   const [showOverride, setShowOverride] = React.useState(false);
   const [reason, setReason] = React.useState('');
   const [toOutcome, setToOutcome] = React.useState('passed');
   const overridden = f.effectiveOutcome !== f.evaluationOutcome;
   const pendingApproval = f.dispositions.some((d: any) => d.requiresApproval && !d.approvedBy);
-  const canDispose = !finalized && ['inspector', 'reviewer'].includes(userRole);
+  const mayDispose = !finalized && canDispose;
 
   return (
     <div className="decl-card">
@@ -237,11 +238,11 @@ function FindingCard({ f, finalized, busy, onFocus, act, userRole }: {
           {f.dispositions.filter((d: any) => d.reason).map((d: any) => ` Reason: ${d.reason}`).join(' ')}</p>
       )}
       {pendingApproval && <p className="warn-box">⚠ High-risk override awaiting independent second-level approval — finalization is blocked.
-        {userRole === 'reviewer' && f.dispositions.filter((d: any) => d.requiresApproval && !d.approvedBy).map((d: any) => (
+        {canApprove && f.dispositions.filter((d: any) => d.requiresApproval && !d.approvedBy).map((d: any) => (
           <button key={d.id} className="secondary" style={{ marginLeft: 8 }} disabled={busy}
             onClick={act(() => api.post(`/dispositions/${d.id}/approve`))}>Approve override</button>
         ))}</p>}
-      {canDispose && (
+      {mayDispose && (
         <div className="btn-row" style={{ marginTop: 6 }}>
           <button className="secondary" disabled={busy}
             onClick={act(async () => {
@@ -258,7 +259,7 @@ function FindingCard({ f, finalized, busy, onFocus, act, userRole }: {
           <button className="quiet" onClick={() => setShowOverride(!showOverride)}>Override…</button>
         </div>
       )}
-      {showOverride && canDispose && (
+      {showOverride && mayDispose && (
         <div style={{ marginTop: 8 }}>
           <label className="field">Override outcome to
             <select value={toOutcome} onChange={(e) => setToOutcome(e.target.value)}>

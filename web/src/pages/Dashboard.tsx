@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../api';
+import { api, roleLabel } from '../api';
 import { AuthContext } from '../App';
 import { Section, useAsync, OutcomeChip } from '../components/common';
 
@@ -14,7 +14,7 @@ export function Dashboard() {
     <>
       <div className="topbar">
         <h1>Dashboard</h1>
-        <span className="who">{user?.name} · {user?.role} · {[user?.state, user?.district].filter(Boolean).join(' / ') || 'organization-wide scope'}</span>
+        <span className="who">{user?.name} · {user ? roleLabel(user.role) : ''} · {[user?.state, user?.district].filter(Boolean).join(' / ') || 'organization-wide scope'}</span>
       </div>
       <div className="content">
         <div className="grid3">

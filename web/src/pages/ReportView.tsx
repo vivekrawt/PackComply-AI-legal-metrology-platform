@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api } from '../api';
+import { api, OUTCOME_META } from '../api';
 import { ErrorText, OutcomeChip, Section, SeverityChip, useAsync } from '../components/common';
 
 export function ReportView() {
@@ -136,6 +136,47 @@ export function ReportView() {
         <div className="grid2">
           <Section title="7 · Officer conclusion">
             <p>Overall: <OutcomeChip outcome={s.officerConclusion.overallStatus === 'compliant' ? 'passed' : s.officerConclusion.overallStatus === 'non_compliant' ? 'failed' : 'needs_review'} /></p>
+            {s.officerConclusion.summary && (
+              <>
+                {/* Counts, never a percentage: one missing mandatory declaration makes the
+                    package non-compliant however many other rules passed (EXT-07). */}
+                <p className="btn-row" style={{ flexWrap: 'wrap', gap: 6 }}>
+                  {([
+                    ['failed', s.officerConclusion.summary.failed, 'failed'],
+                    ['needs_review', s.officerConclusion.summary.needsReview, 'need review'],
+                    ['not_assessable', s.officerConclusion.summary.notAssessable, 'not assessable'],
+                    ['passed', s.officerConclusion.summary.passed, 'passed'],
+                    ['not_applicable', s.officerConclusion.summary.notApplicable, 'not applicable'],
+                  ] as [string, number, string][]).filter(([, n]) => n > 0).map(([outcome, n, label]) => (
+                    <span key={outcome} className={`chip ${outcome}`}>
+                      <span className="ico">{OUTCOME_META[outcome]?.icon}</span>{n} {label}
+                    </span>
+                  ))}
+                </p>
+                <p className="muted">
+                  {s.officerConclusion.summary.total} rules applied
+                  {s.officerConclusion.summary.overridden > 0
+                    ? ` · ${s.officerConclusion.summary.overridden} officer override(s)` : ''}
+                  {' '}· counts are a workload breakdown, not a compliance score.
+                </p>
+              </>
+            )}
+            {s.officerConclusion.failedRules?.length > 0 && (
+              <>
+                <h3>Failed rules</h3>
+                {s.officerConclusion.failedRules.map((f: any) => (
+                  <div key={f.ruleKey} className="decl-card">
+                    <div className="head">
+                      <b>{f.title ?? f.ruleKey}</b>
+                      <span className="mono muted">{f.ruleKey}{f.severity ? ` · ${f.severity}` : ''}</span>
+                    </div>
+                    <p style={{ margin: '4px 0' }}>{f.explanation}</p>
+                    <p className="muted">Citation: {f.citation}</p>
+                  </div>
+                ))}
+              </>
+            )}
+            <h3>All rules</h3>
             <table className="data">
               <thead><tr><th>Rule</th><th>System</th><th>Officer</th><th>Status</th></tr></thead>
               <tbody>{s.officerConclusion.findings.map((f: any) => (

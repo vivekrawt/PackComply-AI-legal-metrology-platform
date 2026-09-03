@@ -1,13 +1,16 @@
 import React from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
+import { usePerm } from '../App';
 import { ErrorText, MockBadge, Section, useAsync } from '../components/common';
 import { CameraCapture } from '../components/CameraCapture';
 
-const FACES = ['front', 'back', 'side', 'top', 'bottom', 'closeup', 'listing', 'other'];
+const FACES = ['front', 'back', 'top', 'bottom', 'left', 'right', 'side', 'closeup', 'listing', 'other'];
 
 export function InspectionDetail() {
   const { id } = useParams<{ id: string }>();
+  const can = usePerm();
+  const nav = useNavigate();
   const detail = useAsync(() => api.get<any>(`/inspections/${id}`), [id]);
   const jobs = useAsync(() => api.get<any>(`/inspections/${id}/jobs`), [id]);
   const [error, setError] = React.useState<unknown>(null);
@@ -84,6 +87,19 @@ export function InspectionDetail() {
           <Link className="btn secondary" to={`/app/inspections/${id}/workbench`}>Open analysis workbench →</Link>
           <Link className="btn secondary" to={`/app/inspections/${id}/report`}>Report</Link>
           {processing && <span className="chip needs_review"><span className="ico">⟳</span>processing…</span>}
+          {can('inspection.delete') && (
+            <button className="danger" disabled={busy} onClick={act(async () => {
+              const reason = prompt('Why is this inspection being deleted? (recorded in the audit log)');
+              if (!reason) throw new Error('A reason is required');
+              // A finalized inspection carries a signed report — the API refuses to delete
+              // one unless the caller explicitly acknowledges that.
+              if (finalized && !window.confirm(
+                'This inspection has been finalized and its report is signed. Delete it anyway?',
+              )) return;
+              await api.del(`/inspections/${id}`, { reason, force: finalized });
+              nav('/app/inspections');
+            })}>Delete inspection</button>
+          )}
         </div>
         <ErrorText error={error} />
 
@@ -173,10 +189,13 @@ export function InspectionDetail() {
 
         <Section title={`Evidence (${detail.data.assets.length})`}>
           <table className="data">
-            <thead><tr><th>Face</th><th>Kind</th><th>Name / URL</th><th>SHA-256</th><th>Quality</th><th>State</th></tr></thead>
+            <thead><tr><th>Face</th><th>Kind</th><th>Name / URL</th><th>SHA-256</th><th>Quality</th><th>State</th><th></th></tr></thead>
             <tbody>
-              {detail.data.assets.map((a: any) => <AssetRow key={a.id} asset={a} />)}
-              {detail.data.assets.length === 0 && <tr><td colSpan={6} className="muted">No evidence yet.</td></tr>}
+              {detail.data.assets.map((a: any) => (
+                <AssetRow key={a.id} asset={a} canDelete={can('evidence.delete') && !finalized}
+                  onDeleted={() => { detail.reload(); }} />
+              ))}
+              {detail.data.assets.length === 0 && <tr><td colSpan={7} className="muted">No evidence yet.</td></tr>}
             </tbody>
           </table>
 
@@ -227,9 +246,15 @@ export function InspectionDetail() {
   );
 }
 
-function AssetRow({ asset }: { asset: any }) {
+function AssetRow({ asset, canDelete, onDeleted }: { asset: any; canDelete: boolean; onDeleted: () => void }) {
   const detail = useAsync(() => api.get<any>(`/assets/${asset.id}`), [asset.id]);
   const q = detail.data?.quality;
+  const remove = async () => {
+    const reason = prompt('Why is this evidence being deleted? (recorded in the audit log)');
+    if (!reason) return;
+    await api.del(`/assets/${asset.id}`, { reason });
+    onDeleted();
+  };
   return (
     <tr>
       <td><span className="chip neutral">{asset.faceLabel ?? '—'}</span></td>
@@ -249,6 +274,7 @@ function AssetRow({ asset }: { asset: any }) {
         ) : <span className="muted">not processed</span>}
       </td>
       <td><span className="chip passed"><span className="ico">✓</span>{asset.uploadState}</span></td>
+      <td>{canDelete && !asset.legalHold && <button className="quiet danger" onClick={remove}>Delete</button>}</td>
     </tr>
   );
 }

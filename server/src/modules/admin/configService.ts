@@ -27,15 +27,19 @@ export function setConfigItem(db: DB, key: string, value: unknown, user?: Sessio
 }
 
 export interface FinalizationPolicy {
-  inspectorCanFinalize: boolean;          // PRD: "policy based" — open decision, configurable
+  userCanFinalize: boolean;               // PRD: "policy based" — open decision, configurable
   secondApprovalSeverities: string[];     // overrides at these severities need independent approval
 }
 
 export function getFinalizationPolicy(db: DB): FinalizationPolicy {
-  return (
-    getConfigItem<FinalizationPolicy>(db, 'finalization_policy') ?? {
-      inspectorCanFinalize: true, // DOCUMENTED ASSUMPTION — see docs/ASSUMPTIONS.md (reversible config)
-      secondApprovalSeverities: ['high'],
-    }
+  const stored = getConfigItem<Partial<FinalizationPolicy> & { inspectorCanFinalize?: boolean }>(
+    db, 'finalization_policy',
   );
+  return {
+    // DOCUMENTED ASSUMPTION — see docs/ASSUMPTIONS.md (reversible config). Set this
+    // false to force every report through an `admin` reviewer before it is signed.
+    // `inspectorCanFinalize` is the pre-three-role key name, still honoured on read.
+    userCanFinalize: stored?.userCanFinalize ?? stored?.inspectorCanFinalize ?? true,
+    secondApprovalSeverities: stored?.secondApprovalSeverities ?? ['high'],
+  };
 }

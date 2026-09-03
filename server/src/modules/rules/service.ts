@@ -118,6 +118,29 @@ export function updateDraft(db: DB, user: SessionUser, id: string, patch: Partia
   return getRuleVersion(db, id);
 }
 
+// Deletion (super_admin only, DEL-01). Unpublished versions only: a published or
+// retired version has evaluations pinned to it, and dropping it would make finalized
+// reports unverifiable. Those are retired or rolled back, never deleted.
+export function deleteVersion(db: DB, user: SessionUser, id: string, reason: string) {
+  const rv = db.prepare('SELECT * FROM rule_versions WHERE id = ?').get(id) as any;
+  if (!rv) throw notFound('Rule version not found');
+  if (!['draft', 'submitted', 'approved'].includes(rv.status)) {
+    throw conflict(`A ${rv.status} rule version cannot be deleted — retire or roll it back so evaluations stay verifiable`);
+  }
+  const used = (db.prepare(
+    'SELECT COUNT(*) AS c FROM evaluations WHERE rule_version_id = ?',
+  ).get(id) as any).c;
+  if (used > 0) throw conflict('This version has already produced evaluations and cannot be deleted');
+  if (!reason?.trim()) throw badRequest('Deletion requires a reason (it is written to the audit log)');
+  db.prepare('DELETE FROM rule_versions WHERE id = ?').run(id);
+  recordAudit(db, {
+    actorId: user.id, actorLabel: user.email, action: 'rule.deleted',
+    objectType: 'rule_version', objectId: id,
+    before: { ruleKey: rv.rule_key, version: rv.version, status: rv.status }, after: { reason },
+  });
+  return { id, deleted: true };
+}
+
 export function submitVersion(db: DB, user: SessionUser, id: string) {
   const rv = db.prepare('SELECT * FROM rule_versions WHERE id = ?').get(id) as any;
   if (!rv) throw notFound('Rule version not found');

@@ -325,4 +325,66 @@ ALTER TABLE inspections ADD COLUMN client_ref TEXT;
 CREATE INDEX idx_insp_client_ref ON inspections(created_by, client_ref);
 `,
   },
+  {
+    // Three-role model (user / admin / super_admin) replaces the original six-role
+    // matrix, and soft-delete columns give super_admin a destructive verb that does
+    // not break the append-only audit chain or the foreign keys pointing at these rows.
+    id: '003_roles_and_soft_delete',
+    sql: `
+UPDATE users SET role = CASE role
+  WHEN 'inspector'  THEN 'user'
+  WHEN 'analyst'    THEN 'user'
+  WHEN 'reviewer'   THEN 'admin'
+  WHEN 'auditor'    THEN 'admin'
+  WHEN 'rule_admin' THEN 'super_admin'
+  WHEN 'sys_admin'  THEN 'super_admin'
+  ELSE role END
+WHERE role NOT IN ('user', 'admin', 'super_admin');
+
+DELETE FROM role_permissions;
+
+ALTER TABLE inspections ADD COLUMN deleted_at TEXT;
+ALTER TABLE inspections ADD COLUMN deleted_by TEXT;
+ALTER TABLE inspections ADD COLUMN deleted_reason TEXT;
+ALTER TABLE evidence_assets ADD COLUMN deleted_at TEXT;
+ALTER TABLE evidence_assets ADD COLUMN deleted_by TEXT;
+ALTER TABLE evidence_assets ADD COLUMN deleted_reason TEXT;
+CREATE INDEX idx_insp_deleted ON inspections(deleted_at);
+`,
+  },
+  {
+    // Migration 003 remapped the seeded demo accounts to the three-role model but left
+    // their e-mail addresses on the old role names, so an existing database still had
+    // inspector@/reviewer@/ruleadmin@ while the sign-in screen offered user@/admin@/
+    // superadmin@ — every demo sign-in failed with "invalid email or password".
+    // Rename them in place: the scrypt password hash is untouched, so the demo password
+    // still works. Each rename is guarded so it is a no-op if the target already exists
+    // (a database seeded after the three-role change) or the source is absent.
+    id: '004_demo_account_emails',
+    sql: `
+UPDATE users SET email = 'user@demo.gov.example', updated_at = updated_at
+ WHERE email = 'inspector@demo.gov.example'
+   AND NOT EXISTS (SELECT 1 FROM users u WHERE u.email = 'user@demo.gov.example');
+
+UPDATE users SET email = 'admin@demo.gov.example'
+ WHERE email = 'reviewer@demo.gov.example'
+   AND NOT EXISTS (SELECT 1 FROM users u WHERE u.email = 'admin@demo.gov.example');
+
+UPDATE users SET email = 'superadmin@demo.gov.example'
+ WHERE email = 'ruleadmin@demo.gov.example'
+   AND NOT EXISTS (SELECT 1 FROM users u WHERE u.email = 'superadmin@demo.gov.example');
+
+UPDATE users SET email = 'superadmin2@demo.gov.example'
+ WHERE email = 'ruleadmin2@demo.gov.example'
+   AND NOT EXISTS (SELECT 1 FROM users u WHERE u.email = 'superadmin2@demo.gov.example');
+
+UPDATE users SET email = 'user.ka@demo.gov.example'
+ WHERE email = 'inspector.ka@demo.gov.example'
+   AND NOT EXISTS (SELECT 1 FROM users u WHERE u.email = 'user.ka@demo.gov.example');
+
+-- analyst@ / sysadmin@ / auditor@ have no counterpart in the three-role demo set. They
+-- keep working under their existing addresses with the role migration 003 gave them;
+-- they are simply no longer offered as one-click sign-ins.
+`,
+  },
 ];

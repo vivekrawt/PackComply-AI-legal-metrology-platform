@@ -1,13 +1,14 @@
 import React from 'react';
 import { api } from '../api';
-import { AuthContext } from '../App';
+import { usePerm } from '../App';
 import { ErrorText, LegalFlag, Section, useAsync } from '../components/common';
 
 // Legal rule library + governance workbench (ADM-01). Draft → test → submit →
 // independent approve → publish → rollback; published versions are immutable.
 export function RuleLibrary() {
-  const { user } = React.useContext(AuthContext);
-  const isAdmin = user?.role === 'rule_admin';
+  // Rule authoring is a super_admin permission; every other role gets the read-only view.
+  const can = usePerm();
+  const isAdmin = can('rule.draft');
   const versions = useAsync(() => api.get<any>('/rules/versions'));
   const sets = useAsync(() => api.get<any>('/rules/sets'));
   const dash = useAsync(() => api.get<any>('/dashboards/rule-admin'));
@@ -71,6 +72,14 @@ export function RuleLibrary() {
                 {sel.status === 'approved' && <button className="primary" onClick={act(() => api.post(`/rules/versions/${sel.id}/publish`))}>Publish (runs regression pack)</button>}
                 {sel.status === 'published' && <button className="danger" onClick={act(() => api.post(`/rules/versions/${sel.id}/retire`))}>Retire</button>}
                 {sel.status === 'retired' && <button className="secondary" onClick={act(() => api.post(`/rules/versions/${sel.id}/rollback`))}>Roll back to this version</button>}
+                {can('rule.delete') && ['draft', 'submitted', 'approved'].includes(sel.status) && (
+                  <button className="danger" onClick={act(async () => {
+                    const reason = prompt('Why is this unpublished version being deleted?');
+                    if (!reason) throw new Error('A reason is required');
+                    await api.del(`/rules/versions/${sel.id}`, { reason });
+                    setSel(null);
+                  })}>Delete draft</button>
+                )}
               </div>
             )
           }>

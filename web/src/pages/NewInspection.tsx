@@ -119,7 +119,7 @@ export function NewInspection() {
                 device and synced automatically when connectivity returns — nothing is lost, nothing uploads yet.</p>
               <div className="btn-row">
                 <select value={photoFace} onChange={(e) => setPhotoFace(e.target.value)} aria-label="Package face for photo">
-                  {['front', 'back', 'side', 'top', 'bottom', 'closeup'].map((fc) => <option key={fc}>{fc}</option>)}
+                  {['front', 'back', 'top', 'bottom', 'left', 'right', 'closeup'].map((fc) => <option key={fc}>{fc}</option>)}
                 </select>
                 <input type="file" accept="image/jpeg,image/png" capture="environment" aria-label="Queue evidence photo"
                   onChange={(e) => {

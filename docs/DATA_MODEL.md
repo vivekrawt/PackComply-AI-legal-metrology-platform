@@ -7,14 +7,19 @@ prefixed ULID-style strings (`insp_…`, `ev_…`).
 ## Entities
 
 - **organizations** — agency hierarchy node: id, name, kind(agency/state/district/office), parent_id.
-- **users** — id, email, name, password_hash(scrypt), role, org scope fields, status
+- **users** — id, email, name, password_hash(scrypt), role (`user` | `admin` | `super_admin`), org scope
+  fields, status (`invited`/`active`/`suspended`/`offboarded` — deleting an account sets `offboarded` and
+  anonymises the e-mail, because audit events reference this actor)
   (invited/active/suspended/offboarded), mfa_secret (nullable, MFA-ready), session_policy.
 - **sessions** — id, user_id, expires_at, last_seen_at, revoked_at.
-- **role_permissions** — seeded config: role, permission. (Matrix mirrors PRD §04.)
+- **role_permissions** — informational mirror of the code matrix (`ROLE_PERMISSIONS`), rebuilt on every
+  boot by `syncRolePermissions`. Authorization checks read the code matrix, never this table.
 - **inspections** — id, type (physical_retail/warehouse_import/back_office/complaint/ecommerce), status
   (draft/capturing/processing/review/pending_approval/finalized/closed), event_date, jurisdiction+scope,
   location (+gps), seller_entity_id, assigned_to, due_date, priority, sensitivity, checklist_state JSON,
-  waivers JSON, lineage: parent_inspection_id, reinspection_of_finding_id, created_by. **Finalized rows
+  waivers JSON, lineage: parent_inspection_id, reinspection_of_finding_id, created_by,
+  soft-delete columns deleted_at/deleted_by/deleted_reason (super_admin only; every read path filters
+  on `deleted_at IS NULL` via `scopeWhere`). **Finalized rows
   reject mutation at the service layer.**
 - **products** — id, brand, generic_name, category, gtin, sku, batch_lot, package_form, package_type,
   pack_size, import_status, dimensions JSON. Linked to inspection (inspection_products).

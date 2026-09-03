@@ -6,8 +6,13 @@ import { startWorker } from './modules/processing/queue.js';
 import { registerPipelineHandlers } from './modules/processing/pipeline.js';
 import { mockComponents, providerModelVersions } from './providers/registry.js';
 import { seedIfEmpty, seedDemoInspections } from './db/seed.js';
+import { syncRolePermissions } from './modules/auth/service.js';
 
 const db = getDb();
+// Keep role_permissions in step with the code matrix on every boot — an existing
+// database that predates the three-role model is remapped by migration 003 and
+// then re-mirrored here.
+syncRolePermissions(db);
 seedIfEmpty(db);
 registerPipelineHandlers();
 await seedDemoInspections(db).catch((e) => logger.error('demo seed failed', { error: String(e) }));
