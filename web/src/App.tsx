@@ -4,6 +4,8 @@ import { api, ROLE_META, type User } from './api';
 import { t } from './i18n';
 import { Landing } from './pages/Landing';
 import { Login } from './pages/Login';
+import { Signup } from './pages/Signup';
+import { ScanShell } from './scan/ScanShell';
 import { Dashboard } from './pages/Dashboard';
 import { InspectionsList } from './pages/InspectionsList';
 import { NewInspection } from './pages/NewInspection';
@@ -62,11 +64,19 @@ export function App() {
     <AuthContext.Provider value={{ user: user ?? null, demoProviders, permissions, can, refresh }}>
       {!online && <div className="offline-banner" role="status">⚠ Offline — drafts stay on this device until connectivity returns. Do not close the browser with unsaved uploads.</div>}
       <Routes>
-        <Route path="/" element={user ? <Navigate to="/app" replace /> : <Landing />} />
+        {/* Signup is the front door: a new officer registers, then scans. The
+            marketing landing page stays reachable at /about for anyone who wants
+            the platform overview first. */}
+        <Route path="/" element={user ? <Navigate to="/app" replace /> : <Signup />} />
+        <Route path="/about" element={user ? <Navigate to="/app" replace /> : <Landing />} />
         <Route path="/login" element={user ? <Navigate to="/app" replace /> : <Login />} />
-        <Route path="/app/*" element={user
-          ? <Shell user={user} demo={demoProviders} mockComponents={mockComponents} />
-          : <Navigate to="/login" replace />} />
+        {/* A field officer gets the scan flow; reviewers and administrators get
+            the full casework shell, which is the authority their role carries. */}
+        <Route path="/app/*" element={!user
+          ? <Navigate to="/login" replace />
+          : user.role === 'user'
+            ? <ScanShell user={user} />
+            : <Shell user={user} demo={demoProviders} mockComponents={mockComponents} />} />
       </Routes>
     </AuthContext.Provider>
   );

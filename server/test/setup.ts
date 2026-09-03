@@ -18,3 +18,7 @@ process.env.PROVIDER_LAYOUT = 'mock';
 process.env.PROVIDER_EXTRACTION = 'mock';
 process.env.PROVIDER_FONT = 'mock';
 process.env.PROVIDER_MALWARE = 'noop';
+// The compliance judge defaults to 'gemini' whenever GEMINI_API_KEY is present in
+// the environment or a local .env. Pin it here so `npm test` never makes a live,
+// billed API call — and so the suite stays deterministic and offline.
+process.env.PROVIDER_COMPLIANCE = 'rule_engine';

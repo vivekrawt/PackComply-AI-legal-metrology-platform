@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 // Minimal .env loader (no external dep). Values already in process.env win.
 function loadDotEnv() {
@@ -41,7 +42,32 @@ export const config = {
     extraction: process.env.PROVIDER_EXTRACTION ?? 'mock',
     font: process.env.PROVIDER_FONT ?? 'mock',
     malwareScanner: process.env.PROVIDER_MALWARE ?? 'noop',
+    // Compliance judge: the LLM that reads the OCR text against the LMPC 2011
+    // corpus. 'gemini' when a key is configured, otherwise the deterministic
+    // rule engine — which is labeled isMock so its output can never be mistaken
+    // for an AI reading of the statute.
+    compliance: process.env.PROVIDER_COMPLIANCE
+      ?? (process.env.GEMINI_API_KEY ? 'gemini' : 'rule_engine'),
   },
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY ?? '',
+    // Flash-family alias that tracks the current Flash release; pin a specific id
+    // via GEMINI_MODEL if a scan must be reproducible against one model version.
+    model: process.env.GEMINI_MODEL ?? 'gemini-flash-latest',
+    baseUrl: process.env.GEMINI_BASE_URL ?? 'https://generativelanguage.googleapis.com/v1beta',
+    timeoutMs: Number(process.env.GEMINI_TIMEOUT_MS ?? 90_000),
+    // Retry budget for transient failures (503 overload, 429 quota). Generous
+    // because the judge runs in a background job behind a progress bar, not in a
+    // request the officer is blocking on.
+    maxAttempts: Number(process.env.GEMINI_MAX_ATTEMPTS ?? 6),
+    backoffMs: Number(process.env.GEMINI_BACKOFF_MS ?? 1500),
+    backoffCapMs: Number(process.env.GEMINI_BACKOFF_CAP_MS ?? 30_000),
+  },
+  // Statutory corpus the compliance judge reads. Every .txt/.md file in this
+  // directory is concatenated; the SHA-256 of the result is recorded on each
+  // verdict so a report always names the exact text the model was shown.
+  rulesDir: process.env.PACKCOMPLY_RULES_DIR
+    ?? path.resolve(fileURLToPath(new URL('../../assets/rules', import.meta.url))),
   jobs: {
     pollMs: Number(process.env.JOB_POLL_MS ?? 400),
     maxAttempts: Number(process.env.JOB_MAX_ATTEMPTS ?? 3),

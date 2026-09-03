@@ -387,4 +387,36 @@ UPDATE users SET email = 'user.ka@demo.gov.example'
 -- they are simply no longer offered as one-click sign-ins.
 `,
   },
+  {
+    // Field-officer scan flow: an LLM reads the OCR text of a scanned package
+    // against the statutory corpus and returns an officer-facing verdict.
+    //
+    // The verdict is stored alongside — never instead of — the deterministic
+    // evaluations: rules_sha256 pins the exact statutory text the model was
+    // shown, ocr_text pins exactly what it read, and is_mock records whether a
+    // model read the rules at all. Without all three a verdict is unreproducible
+    // and has no place in an evidence-first report.
+    id: '005_compliance_verdicts',
+    sql: `
+CREATE TABLE compliance_verdicts (
+  id TEXT PRIMARY KEY,
+  inspection_id TEXT NOT NULL REFERENCES inspections(id),
+  provider TEXT NOT NULL,
+  model_version TEXT NOT NULL,
+  is_mock INTEGER NOT NULL DEFAULT 0,
+  rules_sources_json TEXT NOT NULL DEFAULT '[]',
+  rules_sha256 TEXT,
+  ocr_text TEXT NOT NULL,
+  overall TEXT NOT NULL,           -- compliant|non_compliant|needs_review
+  summary TEXT,
+  confidence REAL,
+  checks_json TEXT NOT NULL DEFAULT '[]',
+  raw_json TEXT,
+  error TEXT,                      -- set when the judge failed; overall is then needs_review
+  created_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_verdict_inspection ON compliance_verdicts(inspection_id, created_at);
+`,
+  },
 ];

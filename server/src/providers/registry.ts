@@ -4,9 +4,11 @@ import {
   HeuristicExtractionProvider, MockFontMeasurementProvider, NoopMalwareScanner,
 } from './mock.js';
 import { TesseractOCRProvider } from './tesseract.js';
+import { GeminiComplianceProvider } from './gemini.js';
+import { RuleEngineComplianceProvider } from './ruleEngineJudge.js';
 import type {
-  DeclarationExtractionProvider, FontMeasurementProvider, ImageQualityProvider,
-  LayoutProvider, MalwareScanner, OCRProvider,
+  ComplianceJudgeProvider, DeclarationExtractionProvider, FontMeasurementProvider,
+  ImageQualityProvider, LayoutProvider, MalwareScanner, OCRProvider,
 } from './types.js';
 
 // Explicit provider selection. Unknown names fail fast — the system never
@@ -39,6 +41,12 @@ export const providers = {
   malware: pick<MalwareScanner>('malware', config.providers.malwareScanner, {
     noop: () => new NoopMalwareScanner(),
   }),
+  // The LLM that reads OCR text against the LMPC 2011 corpus. 'rule_engine' is
+  // the honest no-key fallback, not a silent substitute: it is isMock and says so.
+  compliance: pick<ComplianceJudgeProvider>('compliance', config.providers.compliance, {
+    gemini: () => new GeminiComplianceProvider(),
+    rule_engine: () => new RuleEngineComplianceProvider(),
+  }),
 };
 
 export function providerModelVersions() {
@@ -48,6 +56,7 @@ export function providerModelVersions() {
     ocr: providers.ocr.modelVersion,
     extraction: providers.extraction.modelVersion,
     font: providers.font.modelVersion,
+    compliance: providers.compliance.modelVersion,
   };
 }
 
@@ -60,6 +69,7 @@ export function mockComponents(): string[] {
     OCR: providers.ocr,
     'declaration extraction': providers.extraction,
     'font measurement': providers.font,
+    'compliance judge': providers.compliance,
   }).filter(([, p]) => p.isMock).map(([name]) => name);
 }
 
