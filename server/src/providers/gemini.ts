@@ -5,7 +5,7 @@ import type {
   ComplianceStatus, ComplianceVerdict, RulesCorpus,
 } from './types.js';
 
-// Gemini Flash compliance judge. The statutory corpus goes in systemInstruction
+// Gemini compliance judge (Flash / Flash Lite). The statutory corpus goes in systemInstruction
 // (a stable prefix, so repeat scans reuse the provider's implicit cache); the
 // OCR text of the package goes in the user turn. Structured output is enforced
 // with responseSchema rather than parsed out of prose.
@@ -296,7 +296,13 @@ export class GeminiComplianceProvider implements ComplianceJudgeProvider {
 
     const payload = await this.post(url, body);
     const candidate = payload?.candidates?.[0];
-    const text = candidate?.content?.parts?.map((p: any) => p?.text ?? '').join('') ?? '';
+    // Flash Lite is a thinking model. Thought parts are only returned when
+    // includeThoughts is set (it is not), but concatenating one into the JSON
+    // would corrupt the parse, so drop anything flagged as a thought rather
+    // than depending on that default holding.
+    const text = candidate?.content?.parts
+      ?.filter((p: any) => p?.thought !== true)
+      .map((p: any) => p?.text ?? '').join('') ?? '';
     if (!text.trim()) {
       const reason = candidate?.finishReason ?? payload?.promptFeedback?.blockReason ?? 'unknown';
       throw new Error(`Gemini returned no content (finishReason: ${reason})`);

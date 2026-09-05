@@ -69,6 +69,28 @@ async function processEvidence(db: DB, job: JobRow) {
   }
 
   const ocr = await providers.ocr.recognize(input);
+
+  // An OCR provider that prepared the image (deskew/crop/enhance) hands the
+  // prepared pixels back. Store them as a DERIVATIVE: the officer's upload stays
+  // the immutable evidence of record at its own address, and the derivative
+  // records what the recogniser actually read plus the exact operations that
+  // produced it. Re-running processing replaces this asset's derivatives, so a
+  // retry cannot leave two competing "what the model saw" images behind.
+  db.prepare("DELETE FROM evidence_derivatives WHERE asset_id = ? AND operation = 'ocr_preprocess'")
+    .run(asset.id);
+  if (ocr.derived) {
+    const stored = objectStore.put(ocr.derived.bytes);
+    db.prepare(
+      `INSERT INTO evidence_derivatives (id, asset_id, operation, params_json, sha256, storage_key,
+         provider, model_version, is_mock, created_at) VALUES (?, ?, 'ocr_preprocess', ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(newId('der'), asset.id,
+      JSON.stringify({
+        ops: ocr.derived.ops, mime: ocr.derived.mime,
+        inputSize: ocr.derived.inputSize ?? null, outputSize: ocr.derived.outputSize ?? null,
+      }),
+      stored.sha256, stored.storageKey, ocr.provider, ocr.modelVersion, ocr.isMock ? 1 : 0, t);
+  }
+
   const insOcr = db.prepare(
     `INSERT INTO ocr_blocks (id, asset_id, block_type, text, bbox_json, reading_order, script, lang,
        confidence, provider, model_version, is_mock, created_at) VALUES (?, ?, 'line', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -85,6 +107,9 @@ async function processEvidence(db: DB, job: JobRow) {
     actorLabel: 'system', action: 'processing.evidence_processed', objectType: 'evidence_asset',
     objectId: asset.id, correlationId: job.correlation_id,
     after: { quality: q.overall, reasonCodes: q.reasonCodes, ocrBlocks: ocr.blocks.length,
+      // The audit trail names the preparation applied to the pixels, not just
+      // the reading taken from them.
+      preprocessing: ocr.derived ? ocr.derived.ops : null,
       modelVersions: { quality: q.modelVersion, layout: layout.modelVersion, ocr: ocr.modelVersion }, isMock: q.isMock },
   });
 }

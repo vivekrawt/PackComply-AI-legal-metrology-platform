@@ -81,6 +81,27 @@ describe('Gemini compliance judge', () => {
     });
   });
 
+  it('ignores thought parts so a thinking model still parses', async () => {
+    // Flash Lite reasons before answering. A thought part landing next to the
+    // JSON must not be concatenated into it.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(reply({
+      candidates: [{
+        content: {
+          parts: [
+            { text: 'Weighing whether the net quantity declaration is legible...', thought: true },
+            { text: JSON.stringify({ overall: 'compliant', summary: 'ok', confidence: 0.7, checks: [] }) },
+          ],
+        },
+        finishReason: 'STOP',
+      }],
+    })));
+    await withKey(async () => {
+      const v = await new GeminiComplianceProvider().judge(INPUT, RULES);
+      expect(v.overall).toBe('compliant');
+      expect(v.confidence).toBe(0.7);
+    });
+  });
+
   it('falls back to needs_review rather than inventing an outcome', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(verdictReply({
       overall: 'definitely-fine', summary: 's', confidence: 'not-a-number', checks: 'not-an-array',

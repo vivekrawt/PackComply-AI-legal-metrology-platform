@@ -30,8 +30,12 @@ prefixed ULID-style strings (`insp_…`, `ev_…`).
   url), captured_at (device time), received_at (server time), uploader_id, device JSON, gps JSON,
   url/marketplace/seller for e-comm, upload_state, legal_hold flag. **Original binary write-once,
   content-addressed by sha256.**
-- **evidence_derivatives** — id, asset_id, operation (rotate/dewarp/crop/denoise/contrast/thumbnail),
-  params JSON, sha256, storage_key, provider, model_version. Never replaces original.
+- **evidence_derivatives** — id, asset_id, operation, params JSON, sha256, storage_key, provider,
+  model_version. Never replaces original. Written by the OCR stage when the provider prepares the image
+  before reading it (operation `ocr_preprocess`, PaddleOCR path): params JSON carries the ordered list
+  of OpenCV/Pillow operations applied — exif_transpose, resize, rotate, crop, clahe, denoise, sharpen —
+  plus input and output pixel dimensions, so what was done to the officer's photograph is always
+  answerable. One row per asset: re-processing replaces it.
 - **calibrations** — id, asset_id, method (marker/known_dimension/device/manual), value_mm_per_px,
   uncertainty_pct, instrument, entered_by, notes. Absence ⇒ font checks Not Assessable.
 - **quality_assessments** — id, asset_id, provider, model_version, is_mock, scores JSON (blur/glare/

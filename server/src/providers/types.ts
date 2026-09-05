@@ -47,7 +47,19 @@ export interface OcrBlock {
   text: string; bbox: BBox; readingOrder: number;
   script: 'latin' | 'devanagari' | 'mixed'; lang: 'en' | 'hi' | 'mixed'; confidence: number;
 }
-export interface OcrResult extends ProviderMeta { blocks: OcrBlock[] }
+// An OCR provider that prepares the image before reading it (deskew, crop,
+// enhance) hands the prepared pixels back with the text. The pipeline stores it
+// as a derivative of the original asset — the original stays the evidence of
+// record, and a report can still show precisely what the recogniser read.
+// `ops` is the ordered list of operations applied, kept for the audit trail.
+export interface OcrDerivedImage {
+  bytes: Buffer;
+  mime: string;
+  ops: unknown[];
+  inputSize?: { w: number; h: number };
+  outputSize?: { w: number; h: number };
+}
+export interface OcrResult extends ProviderMeta { blocks: OcrBlock[]; derived?: OcrDerivedImage }
 
 export interface ExtractionCandidate {
   declType: string;

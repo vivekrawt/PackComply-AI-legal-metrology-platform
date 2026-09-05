@@ -5,8 +5,9 @@ Automated Legal Metrology compliance inspection platform (MVP vertical slice).
 Runs fully locally on free/open-source components, except the compliance judge, which calls the Gemini
 API when a key is configured and otherwise degrades to a labeled deterministic fallback.
 
-> ⚠ **OCR and the compliance judge are real.** A self-hosted tesseract.js adapter (English + Hindi) runs
-> in-process and works offline; the field-officer scan flow then sends the recovered text to **Gemini Flash**
+> ⚠ **OCR and the compliance judge are real.** Self-hosted **PaddleOCR** (English + Devanagari), with
+> OpenCV/Pillow preparation of every capture, runs in a local sidecar and works offline; the
+> field-officer scan flow then sends the recovered text to **Gemini 3.5 Flash Lite**
 > together with the full text of the Legal Metrology (Packaged Commodities) Rules, 2011. With no
 > `GEMINI_API_KEY` set, that step falls back to the built-in deterministic rule engine, which reports
 > itself as **not an AI assessment** — it is never silently substituted. Image-quality, layout,
@@ -19,7 +20,8 @@ API when a key is configured and otherwise degrades to a labeled deterministic f
 
 Node.js 22 + TypeScript + Express (modular monolith) · SQLite (better-sqlite3, FTS5 search) ·
 content-addressed filesystem evidence store · DB-backed async job queue · React 18 + Vite PWA ·
-pdfkit/docx report exporters · vitest tests. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Python 3.11 + FastAPI OCR sidecar (PaddleOCR + OpenCV/Pillow) · pdfkit/docx report exporters ·
+vitest + pytest tests. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Quick start
 
@@ -103,9 +105,12 @@ Capture the sides            top · bottom · left · right, each optional indiv
         │                    declaration is absent, only that you did not photograph it
         │                    exact duplicate bytes are refused at upload by SHA-256
         ▼
-OCR                          tesseract (en+hi), in-process — text recovered per face
+Image preparation            OpenCV/Pillow — EXIF, deskew, crop to text, upscale, CLAHE, sharpen
+        │                    every operation recorded; the prepared image kept as a derivative
         ▼
-Compliance judge             the OCR text + the FULL text of the LMPC Rules, 2011 → Gemini Flash
+OCR                          PaddleOCR (en + devanagari) in the sidecar — text recovered per face
+        ▼
+Compliance judge             the OCR text + the FULL text of the LMPC Rules, 2011 → Gemini 3.5 Flash Lite
         │                    structured verdict, temperature 0, statutory text hashed onto the row
         ▼
 Verdict                      Compliance ready · Not compliance ready · Needs review
@@ -150,9 +155,9 @@ are never silently comparable.
 
 ```bash
 # server/.env
-GEMINI_API_KEY=...              # unset → deterministic fallback, labeled as not-an-AI-assessment
-GEMINI_MODEL=gemini-flash-latest
-PROVIDER_COMPLIANCE=gemini      # or rule_engine to force the fallback
+GEMINI_API_KEY=...                    # unset → deterministic fallback, labeled as not-an-AI-assessment
+GEMINI_MODEL=gemini-3.5-flash-lite    # default; any generateContent model works (e.g. gemini-3.5-flash)
+PROVIDER_COMPLIANCE=gemini            # or rule_engine to force the fallback
 ```
 
 `npm test` pins `PROVIDER_COMPLIANCE=rule_engine`, so the suite never makes a live billed call.
@@ -177,12 +182,38 @@ path — new inspection → evidence → calibration → processing → workbenc
 
 ## Real OCR (self-hosted, free, default)
 
-Real OCR runs out of the box: tesseract.js (WASM) in-process, English + Hindi, with language data
-committed to `server/assets/tessdata` so a fresh clone works **offline** and evidence never leaves the
-server. Upload or capture real JPEG/PNG label photos and you get real recognition with real bounding
-boxes. Limits: JPEG/PNG/BMP only (HEIC/PDF need a rasterizer) and it is not yet benchmarked against the
-PRD acceptance corpus. Set `PROVIDER_OCR=mock` for deterministic runs; verify the adapter with
-`cd server && RUN_TESSERACT_TESTS=1 npm test -- tesseract`.
+**PaddleOCR** with OpenCV/Pillow image preparation, running in the Python sidecar in
+[ocr-service/](ocr-service/) — `PROVIDER_OCR=paddle`, the default. It is reached over loopback, so
+evidence never leaves the deployment, and the models are local, so it works **offline** once they are
+cached. Upload or capture real JPEG/PNG/WebP label photos and you get real recognition with real
+bounding boxes.
+
+Every capture is prepared before it is read: EXIF orientation, deskew, crop to the text, upscale a
+small capture, then CLAHE contrast, denoise and unsharp. This is not cosmetic — a tilted shot of a
+demo label went from 7 of 8 lines recovered to 8 of 8 once deskew was working.
+
+Two properties keep that defensible:
+
+- **The original is never touched.** The prepared image is stored as an `evidence_derivatives` row
+  beside it, with its own SHA-256 and the exact ordered list of operations that produced it, so a
+  report can show both what the officer photographed and what the recogniser read.
+- **Boxes are reported against the original photograph.** Preparation rotates and crops, so the
+  service maps every box back through the inverse of its own transform. Verified to ~1 px on a
+  6°-rotated capture.
+
+English and Devanagari are separate recognition models; both run and their readings are merged per
+box, with a genuinely-Devanagari reading preferred over a Latin model's transliteration of it.
+
+Setup is `python -m venv .venv` plus `ocr-service/requirements.txt`; `npm run dev` starts the sidecar
+with the app, or `npm run ocr` alone. If it is not running, evidence processing **fails loudly** — a
+configured engine is never silently swapped for another.
+
+`PROVIDER_OCR=tesseract` keeps the previous in-process tesseract.js (WASM, eng+hin) for a deployment
+that cannot run Python; it does no image preparation and produces no derivative.
+`PROVIDER_OCR=mock` gives deterministic runs. Neither engine is benchmarked against the PRD
+acceptance corpus yet. Verify the adapters with
+`cd server && RUN_PADDLE_TESTS=1 npm test -- paddle.integration` (needs the sidecar up) or
+`RUN_TESSERACT_TESTS=1 npm test -- tesseract`.
 
 The seeded demo evidence is real, legible artwork of clearly fictional products
 (`server/assets/demo-labels/`, regenerate with `node scripts/generate-demo-labels.mjs`). Two labels are
@@ -207,13 +238,20 @@ interrupted uploads resume without duplicates. Failures stay visible — nothing
 ## Commands
 
 ```bash
+# repo root
+npm run dev         # API :4000 + web :5173 + OCR sidecar :8100 together
+npm run ocr         # just the PaddleOCR sidecar
+
 cd server
 npm run dev         # API with reload
 npm run seed        # seed database (no-op if already seeded); delete server/data to reset
-npm test            # 80 tests: engine units (incl. the critical calibration pair), API/workflow/UAT,
-                    # the scan flow, and the Gemini adapter with the network stubbed
+npm test            # 92 tests: engine units (incl. the critical calibration pair), API/workflow/UAT,
+                    # the scan flow, and the Gemini and PaddleOCR adapters with the network stubbed
 node ../scripts/extract-rules.mjs   # (re)extract the statutory corpus into assets/rules/
 npm run typecheck
+
+# OCR sidecar (Python) — 12 tests, offline, no models needed
+../.venv/Scripts/python -m pytest ocr-service/test_preprocess.py
 
 cd web
 npm run dev / build

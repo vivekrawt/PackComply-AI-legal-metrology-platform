@@ -4,6 +4,7 @@ import {
   HeuristicExtractionProvider, MockFontMeasurementProvider, NoopMalwareScanner,
 } from './mock.js';
 import { TesseractOCRProvider } from './tesseract.js';
+import { PaddleOCRProvider } from './paddle.js';
 import { GeminiComplianceProvider } from './gemini.js';
 import { RuleEngineComplianceProvider } from './ruleEngineJudge.js';
 import type {
@@ -28,8 +29,12 @@ export const providers = {
   }),
   ocr: pick<OCRProvider>('ocr', config.providers.ocr, {
     mock: () => new MockOCRProvider(),
-    // REAL self-hosted OCR (tesseract.js WASM, eng+hin). Language data caches
-    // to disk on first use; evidence never leaves the process.
+    // REAL self-hosted OCR (PaddleOCR + OpenCV/Pillow preparation) in the Python
+    // sidecar, reached over loopback. Default.
+    paddle: () => new PaddleOCRProvider(),
+    // REAL self-hosted OCR (tesseract.js WASM, eng+hin), in-process. Kept as the
+    // alternative for a deployment that cannot run the sidecar; it does no image
+    // preparation, so it produces no derivative.
     tesseract: () => new TesseractOCRProvider(),
   }),
   extraction: pick<DeclarationExtractionProvider>('extraction', config.providers.extraction, {

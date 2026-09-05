@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "ocr": "node scripts/ocr.mjs",
     "test": "cd server && npm test"
   }
 }

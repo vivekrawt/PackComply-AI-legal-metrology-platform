@@ -5,7 +5,30 @@ services:
       - "4000:4000"
     environment:
       - PACKCOMPLY_SECRET=${PACKCOMPLY_SECRET:-dev-only-compose-secret-change-me}
+      # OCR runs in the sidecar; reached over the compose network, never the internet.
+      - PROVIDER_OCR=paddle
+      - PADDLE_OCR_URL=http://ocr:8100
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     volumes:
       - packcomply-data:/data
+    depends_on:
+      ocr:
+        condition: service_healthy
+
+  ocr:
+    build: ./ocr-service
+    # Deliberately not published to the host: nothing outside the compose
+    # network has any business posting evidence images to it.
+    expose:
+      - "8100"
+    healthcheck:
+      # Models are baked into the image and loaded at boot, so /health answering
+      # means the service can actually read an image, not merely that it booted.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+
 volumes:
   packcomply-data:
