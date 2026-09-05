@@ -35,6 +35,47 @@ export function createUser(
   return id;
 }
 
+// Self-registration for field officers (the scan flow's entry point). Two
+// deliberate constraints:
+//
+//   Role is always 'user'. Nobody can register themselves into review or
+//   administrative authority — admin and super_admin accounts are created by an
+//   existing super_admin through /admin/users.
+//
+//   Each signup gets its own organization. scopeWhere() widens to the whole org
+//   for a user with no state/district/office set, so placing self-registered
+//   accounts in a shared org would let every one of them read every other's
+//   scans. A one-account org is the isolating default; an administrator can move
+//   the account into the real agency org afterwards.
+export function signup(
+  db: DB,
+  input: { email: string; name: string; password: string; organizationName?: string },
+  ip?: string,
+  correlationId?: string,
+): { sessionId: string; user: SessionUser } {
+  const email = input.email.toLowerCase().trim();
+  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+  if (existing) throw conflict('An account already exists for this e-mail address');
+
+  const orgId = newId('org');
+  const t = now();
+  db.transaction(() => {
+    db.prepare('INSERT INTO organizations (id, name, kind, created_at) VALUES (?, ?, ?, ?)')
+      .run(orgId, input.organizationName?.trim() || `${input.name} (self-registered)`, 'field', t);
+    createUser(db, {
+      email, name: input.name, password: input.password, role: 'user', orgId,
+    });
+  })();
+
+  recordAudit(db, {
+    actorLabel: email, action: 'auth.signup', outcome: 'success',
+    objectType: 'user', objectId: email, after: { role: 'user', orgId },
+    sourceIp: ip, correlationId,
+  });
+  // Sign the new officer straight in — the flow is signup, then scan.
+  return login(db, email, input.password, ip, correlationId);
+}
+
 export function login(db: DB, email: string, password: string, ip?: string, correlationId?: string) {
   const row = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase()) as any;
   const fail = () => {

@@ -1,0 +1,16 @@
+# PackComply OCR sidecar.
+#
+# opencv-python-headless is pinned below 4.11 on purpose: paddlex 3.0 requires
+# numpy==1.24.4 on Python < 3.12, and OpenCV 4.11+ requires numpy>=2. Raising the
+# OpenCV pin without also moving off paddlex's numpy pin gives an unsolvable
+# dependency set (pip: ResolutionImpossible).
+#
+# headless, not the desktop build: this process never opens a window, and the GUI
+# build drags in GTK/X11 that a container does not have.
+paddlepaddle==3.0.0
+paddleocr==3.0.0
+opencv-python-headless==4.10.0.84
+pillow==10.4.0
+fastapi==0.115.13
+uvicorn[standard]==0.34.3
+python-multipart==0.0.20

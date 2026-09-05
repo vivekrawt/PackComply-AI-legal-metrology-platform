@@ -47,7 +47,19 @@ export interface OcrBlock {
   text: string; bbox: BBox; readingOrder: number;
   script: 'latin' | 'devanagari' | 'mixed'; lang: 'en' | 'hi' | 'mixed'; confidence: number;
 }
-export interface OcrResult extends ProviderMeta { blocks: OcrBlock[] }
+// An OCR provider that prepares the image before reading it (deskew, crop,
+// enhance) hands the prepared pixels back with the text. The pipeline stores it
+// as a derivative of the original asset — the original stays the evidence of
+// record, and a report can still show precisely what the recogniser read.
+// `ops` is the ordered list of operations applied, kept for the audit trail.
+export interface OcrDerivedImage {
+  bytes: Buffer;
+  mime: string;
+  ops: unknown[];
+  inputSize?: { w: number; h: number };
+  outputSize?: { w: number; h: number };
+}
+export interface OcrResult extends ProviderMeta { blocks: OcrBlock[]; derived?: OcrDerivedImage }
 
 export interface ExtractionCandidate {
   declType: string;
@@ -68,6 +80,55 @@ export interface FontMeasurement {
   confidence: number;
 }
 export interface FontMeasurementResult extends ProviderMeta { measurements: FontMeasurement[] }
+
+// ---- Compliance judge -------------------------------------------------------
+// Reads the OCR text of a scanned package against the statutory corpus and
+// returns an officer-facing verdict. This is the LLM step in the field-officer
+// scan flow. Like every other provider it is stamped with provider/modelVersion/
+// isMock, and the corpus it read is identified by hash on the stored verdict.
+
+export type ComplianceStatus = 'compliant' | 'non_compliant' | 'needs_review';
+
+export interface ComplianceCheck {
+  parameter: string;        // e.g. "Net quantity"
+  ruleReference: string;    // e.g. "Rule 6(1)(d), LMPC 2011"
+  status: 'present' | 'missing' | 'unclear';
+  observedText: string;     // verbatim span the model relied on ('' when absent)
+  issue: string;            // why it fails / needs review ('' when satisfied)
+  remedy: string;           // what the packer must change ('' when satisfied)
+}
+
+export interface RulesCorpus {
+  text: string;
+  sha256: string;
+  sources: string[];
+  chars: number;
+}
+
+export interface ComplianceJudgeInput {
+  eventDate: string;
+  ocrText: string;                                        // exactly what is sent
+  faces: { faceLabel: string | null; text: string }[];
+  productContext?: {
+    brand?: string | null; genericName?: string | null; category?: string | null;
+    importStatus?: string | null; packSize?: string | null;
+  };
+  // Deterministic rule-engine output for the same package. Secondary, clearly
+  // labeled cross-check material — not the model's source of law.
+  engineFindings: { ruleKey: string; title: string; outcome: string; explanation: string; citation: string }[];
+}
+
+export interface ComplianceVerdict extends ProviderMeta {
+  overall: ComplianceStatus;
+  summary: string;
+  confidence: number;
+  checks: ComplianceCheck[];
+  raw?: unknown;
+}
+
+export interface ComplianceJudgeProvider extends ProviderMeta {
+  judge(input: ComplianceJudgeInput, rules: RulesCorpus): Promise<ComplianceVerdict>;
+}
 
 export interface ImageQualityProvider extends ProviderMeta { assess(input: AssetInput): Promise<QualityResult> }
 export interface LayoutProvider extends ProviderMeta { detect(input: AssetInput): Promise<LayoutResult> }

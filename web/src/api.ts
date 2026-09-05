@@ -61,6 +61,72 @@ export const ROLE_META: Record<Role, { label: string; short: string; hint: strin
 
 export const roleLabel = (role: string) => ROLE_META[role as Role]?.label ?? role;
 
+// ---- Field-officer scan flow -----------------------------------------------
+export type ScanStatus = 'capturing' | 'analyzing' | 'ready' | 'failed';
+export type VerdictOverall = 'compliant' | 'non_compliant' | 'needs_review';
+
+export interface ComplianceCheck {
+  parameter: string; ruleReference: string;
+  status: 'present' | 'missing' | 'unclear';
+  observedText: string; issue: string; remedy: string;
+}
+
+export interface Verdict {
+  id: string; provider: string; modelVersion: string; isMock: boolean;
+  rulesSources: string[]; rulesSha256: string | null; ocrText: string;
+  overall: VerdictOverall; summary: string; confidence: number | null;
+  checks: ComplianceCheck[]; error: string | null; createdAt: string;
+}
+
+export interface ScanImage {
+  id: string; side: string | null; name: string | null; sha256: string;
+  sizeBytes: number | null; capturedAt: string | null; source: string | null;
+}
+
+export interface Scan {
+  scanId: string; status: ScanStatus; createdAt: string; eventDate: string;
+  product: Record<string, any> | null; location: string | null; minImages: number;
+  images: ScanImage[];
+  progress: { total: number; done: number; pending: number; errors: string[] };
+  verdict: Verdict | null;
+  engineFindings: { ruleKey: string; title: string; outcome: string; severity: string | null; explanation: string; citation: string }[];
+  ruleVersions: { ruleKey: string; version: number; citation: string; legalStatus: string }[];
+  reportId: string | null;
+}
+
+export interface ScanSummary {
+  scanId: string; status: string; eventDate: string; createdAt: string;
+  location: string | null; brand: string | null; genericName: string | null; category: string | null;
+  imageCount: number; verdict: VerdictOverall | null; verdictIsMock: boolean | null; reportId: string | null;
+}
+
+export interface ScanCapability {
+  minImages: number; sides: string[]; extraSides: string[];
+  judge: { provider: string; modelVersion: string; isMock: boolean };
+  rules: { available: boolean; sources: string[]; sha256: string };
+}
+
+// Verdict presentation. Status is text + icon + colour together, never colour alone.
+export const VERDICT_META: Record<VerdictOverall, { label: string; icon: string; tone: string; blurb: string }> = {
+  compliant: {
+    label: 'Compliance ready', icon: '✓', tone: 'passed',
+    blurb: 'Every mandatory declaration assessed was found on the package.',
+  },
+  non_compliant: {
+    label: 'Not compliance ready', icon: '✕', tone: 'failed',
+    blurb: 'At least one mandatory declaration is missing or defective.',
+  },
+  needs_review: {
+    label: 'Needs review', icon: '⚠', tone: 'needs_review',
+    blurb: 'The captured images do not settle the question — more evidence is needed.',
+  },
+};
+
+export const SIDE_LABELS: Record<string, string> = {
+  top: 'Top', bottom: 'Bottom', left: 'Left', right: 'Right',
+  front: 'Front', back: 'Back', closeup: 'Close-up', other: 'Other side',
+};
+
 export const OUTCOME_META: Record<string, { label: string; icon: string }> = {
   passed: { label: 'Compliant', icon: '✓' },
   failed: { label: 'Non-compliant', icon: '✕' },

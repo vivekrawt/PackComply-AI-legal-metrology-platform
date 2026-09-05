@@ -16,10 +16,42 @@ are recorded in the hash-chained audit log.
 ## Auth
 | Method | Path | Notes |
 |---|---|---|
+| POST | /auth/signup | self-registration — see **Scan flow** below; always creates a `user` |
 | POST | /auth/login | `{email, password}` → sets httpOnly session cookie |
 | POST | /auth/logout | |
 | GET | /auth/me | current user + provider/demo status + `permissions[]` for the signed-in role |
 | GET | /roles | role catalogue: `{role, label, description, permissions[]}` for `user`, `admin`, `super_admin` |
+
+## Scan flow (field officer)
+The `user` role's whole application. A thin façade over the same services the casework routes use —
+same evidence store, same audit chain, same scope checks — shaped for capture-and-verdict rather than
+casework.
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | /auth/signup | `{email, name, password, organizationName?}` → creates a **`user`** account in its own organization and signs it in. Role is never taken from the request. |
+| GET | /scans/capability | sides to request, image floor, judge provider/model/`isMock`, statutory-corpus availability + SHA-256 |
+| POST | /scans | create a scan `{product?, location?}` → `{scanId}` |
+| PUT | /scans/:id/product | brand / generic name / category / pack size / import status |
+| POST | /scans/:id/images | multipart `file` + `side` (`top`\|`bottom`\|`left`\|`right`\|`front`\|`back`\|`closeup`\|`other`) + `source`. One face per request. Exact duplicate bytes are refused. |
+| POST | /scans/:id/analyze | `{force?}` → 202. Queues OCR → declaration extraction → rule evaluation → AI compliance judge. **422** below two images. `force` re-queues only the judge, so a retry after a service outage is not deduplicated into a no-op. |
+| GET | /scans/:id | poll target: `status` (`capturing`\|`analyzing`\|`ready`\|`failed`), progress, images, `verdict`, `engineFindings`, `ruleVersions` |
+| GET | /scans | scan history for the signed-in officer (scope-enforced) |
+| GET | /scans/:id/report | scan report JSON (built on demand; **does not finalize**) |
+| GET | /scans/:id/report.pdf | the same report as PDF |
+
+**Verdict shape.** `{overall: compliant\|non_compliant\|needs_review, summary, confidence, checks[], provider,
+modelVersion, isMock, rulesSources[], rulesSha256, ocrText, error}`. Each check is
+`{parameter, ruleReference, status: present\|missing\|unclear, observedText, issue, remedy}`.
+
+Three fields make a verdict reproducible and are stored on every row: `rulesSha256` (the exact statutory
+text the model read), `ocrText` (exactly what it was given), and `isMock` (whether a model read the rules
+at all, or the deterministic fallback ran). A judge failure is recorded as a verdict row carrying `error`
+rather than discarded — the officer must see that the AI step did not run.
+
+**A scan report is not a finalized report.** Finalization is gated on officer review of every material
+finding (`POST /inspections/:id/finalize`), and this flow deliberately does not waive that gate: the
+scan report is decision support and says so on its face.
 
 ## Inspections
 | POST | /inspections | create (type, eventDate, location, sellerName, product{…}) |

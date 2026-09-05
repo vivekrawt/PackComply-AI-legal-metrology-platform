@@ -11,7 +11,7 @@
 | Jobs | DB-backed queue + in-process worker loop | Idempotent, retries, dead-letter status, visible progress; swaps to Redis/queue for scale without changing the job contract |
 | Frontend | React 18 + Vite + TypeScript, PWA (manifest + service worker) | Responsive web/PWA per PRD; no UI framework lock-in; custom design-token CSS matching the PRD design direction |
 | Reports | pdfkit (PDF), docx (DOCX), native CSV/JSON | Pure-JS, free, offline; behind a `ReportExporter` provider abstraction |
-| AI/OCR | Provider interfaces + deterministic MOCK providers | PRD forbids sending evidence to unapproved public AI services; the app runs with clearly-labeled mock providers; real providers (e.g. self-hosted tesseract) plug in via the same interfaces |
+| AI/OCR | Provider interfaces + deterministic MOCK providers | PRD forbids sending evidence to unapproved public AI services; the app runs with clearly-labeled mock providers; real self-hosted providers (PaddleOCR sidecar, tesseract.js) plug in via the same interfaces |
 | Auth | Local accounts (Node crypto scrypt), DB-backed httpOnly cookie sessions | Free, secure baseline; OIDC/SAML adapter is a documented boundary (IAM-01) |
 | Tests | vitest + supertest | Fast, free |
 
@@ -130,14 +130,41 @@ security policy still applies (ASSUMPTIONS.md A15).
 
 ## Real OCR provider (default)
 
-OCR defaults to a **self-hosted tesseract.js (WASM) adapter** —
-`src/providers/tesseract.ts` — running fully in-process (AI data boundary: evidence never leaves the
-server). English+Hindi (`TESSERACT_LANGS`); language data is committed to `server/assets/tessdata`, so a
-fresh clone works offline and never calls the network. Emits real line boxes normalized to [0..1] via a
-built-in PNG/JPEG/BMP dimension parser (`core/imageSize.ts`); font measurement then uses true pixel
-geometry. Honest limits: JPEG/PNG/BMP only (HEIC/PDF need a rasterizer), unbenchmarked against the PRD
-corpus, `isMock:false` recorded on every block. Set `PROVIDER_OCR=mock` for deterministic runs (the test
-suite pins it). Gated integration test: `RUN_TESSERACT_TESTS=1 npm test -- tesseract`.
+OCR defaults to **PaddleOCR with OpenCV/Pillow image preparation** (`PROVIDER_OCR=paddle`), running in
+the Python sidecar in `ocr-service/` and reached from `src/providers/paddle.ts` over loopback. The AI
+data boundary holds: the sidecar is part of the deployment, is stateless, writes nothing to disk, and
+keeps no image after the response. Models are local, so it works offline once they are cached.
+
+**Why a separate process.** PaddleOCR, OpenCV and Pillow are Python. The alternative — spawning an
+interpreter per image — reloads the models on every call, several seconds each. In the sidecar they
+load once and stay warm.
+
+**Preparation, then recognition, in one call.** The sidecar returns the text *and* the prepared image
+together, so the image stored as evidence is provably the one the recogniser read rather than a re-run
+that might differ. `processEvidence` writes it to `evidence_derivatives` (operation `ocr_preprocess`)
+with its own SHA-256 and the ordered list of operations applied; the officer's upload stays the
+immutable evidence of record at its own address. Re-processing replaces the derivative, so a retry
+never leaves two competing "what the model saw" images.
+
+**Coordinates.** Preparation deskews and crops, so processed-image coordinates are not the officer's
+photograph's. The service composes the affine transform of every geometric step and maps each box back
+through its inverse, and boxes reach the pipeline normalized to [0..1] of the ORIGINAL image — verified
+to about 1 px on a 6°-rotated capture. Nothing downstream (font measurement, overlays) needs to know
+preparation happened.
+
+**Languages.** Recognition models are per-script, so English and Devanagari are two passes
+(`PADDLE_LANGS`), merged per box: the more confident reading wins, except that a reading actually
+containing Devanagari beats a Latin model's transliteration of the same box.
+
+Honest limits: JPEG/PNG/BMP/WebP only (HEIC/PDF need a rasterizer), unbenchmarked against the PRD
+corpus, `isMock:false` recorded on every block. An unreachable sidecar **fails the job** — a configured
+engine is never silently replaced by a different one.
+
+`PROVIDER_OCR=tesseract` keeps the in-process tesseract.js (WASM, eng+hin, `src/providers/tesseract.ts`,
+language data committed to `server/assets/tessdata`) for deployments that cannot run Python; it does no
+preparation and produces no derivative. `PROVIDER_OCR=mock` gives deterministic runs (the test suite
+pins it). Gated integration tests: `RUN_PADDLE_TESTS=1 npm test -- paddle.integration` (needs the
+sidecar up), `RUN_TESSERACT_TESTS=1 npm test -- tesseract`.
 
 ## Guided camera capture (INS-05)
 

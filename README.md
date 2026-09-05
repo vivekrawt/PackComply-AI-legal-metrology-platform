@@ -2,19 +2,26 @@
 
 Automated Legal Metrology compliance inspection platform (MVP vertical slice).
 **Decision support only** — AI proposes, deterministic versioned rules evaluate, authorized officers decide.
-Built entirely on free/open-source components; runs fully locally with **no paid services or external AI APIs**.
+Runs fully locally on free/open-source components, except the compliance judge, which calls the Gemini
+API when a key is configured and otherwise degrades to a labeled deterministic fallback.
 
-> ⚠ **OCR is real** — a self-hosted tesseract.js adapter (English + Hindi) runs in-process by default and
-> works offline. Image-quality, layout, declaration-classification and font-measurement are still
-> deterministic **MOCK/DEMO** providers, clearly labeled everywhere they surface. All seeded legal rule
-> parameters are placeholders flagged **REQUIRES LEGAL APPROVAL**, and all seeded products/labels are
-> synthetic and fictional. Nothing here is a real enforcement decision or certified statutory logic.
+> ⚠ **OCR and the compliance judge are real.** Self-hosted **PaddleOCR** (English + Devanagari), with
+> OpenCV/Pillow preparation of every capture, runs in a local sidecar and works offline; the
+> field-officer scan flow then sends the recovered text to **Gemini 3.5 Flash Lite**
+> together with the full text of the Legal Metrology (Packaged Commodities) Rules, 2011. With no
+> `GEMINI_API_KEY` set, that step falls back to the built-in deterministic rule engine, which reports
+> itself as **not an AI assessment** — it is never silently substituted. Image-quality, layout,
+> declaration-classification and font-measurement remain deterministic **MOCK/DEMO** providers, labeled
+> everywhere they surface. All seeded legal rule parameters are placeholders flagged
+> **REQUIRES LEGAL APPROVAL**, and all seeded products/labels are synthetic and fictional. Nothing here is
+> a real enforcement decision or certified statutory logic.
 
 ## Stack
 
 Node.js 22 + TypeScript + Express (modular monolith) · SQLite (better-sqlite3, FTS5 search) ·
 content-addressed filesystem evidence store · DB-backed async job queue · React 18 + Vite PWA ·
-pdfkit/docx report exporters · vitest tests. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Python 3.11 + FastAPI OCR sidecar (PaddleOCR + OpenCV/Pillow) · pdfkit/docx report exporters ·
+vitest + pytest tests. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Quick start
 
@@ -49,7 +56,7 @@ permission list the server returns with `/auth/me`, so it can never offer an act
 
 | Role | What it is for | Can | Cannot |
 |---|---|---|---|
-| **user** | Does the work — the field officer using the product | Create inspections, capture/upload evidence, run processing, correct declarations, run the compliance check, disposition findings, export reports | Approve overrides, amend a signed report, issue notices, read the audit log, author rules, administer users, **delete anything** |
+| **user** | Does the work — the field officer using the product. Self-registration always produces this role, in its own organization. Signs in to the **scan flow**, not the casework workbench | Create scans/inspections, capture/upload evidence, run processing, correct declarations, run the compliance check, disposition findings, export reports | Approve overrides, amend a signed report, issue notices, read the audit log, author rules, administer users, **delete anything** |
 | **admin** | Reviews the work | Read all casework in the organization, disposition findings, approve second-level overrides, finalize and amend reports, issue notices, order re-inspections, read the audit log | Create inspections, upload evidence, edit declarations, administer users or configuration, **delete anything** |
 | **super_admin** | Full write **and delete** | Everything above, plus rule drafting/approval/publication, user administration, system configuration, and deletion of inspections, evidence, unpublished rule versions and accounts | — (holds every permission by construction) |
 
@@ -72,7 +79,7 @@ Finalization by `user` is policy-driven: set the `finalization_policy` config it
 
 | E-mail | Role |
 |---|---|
-| user@demo.gov.example | **user** — field officer (Maharashtra/Pune scope) |
+| user@demo.gov.example | **user** — field officer (Maharashtra/Pune scope); lands in the scan flow |
 | admin@demo.gov.example | **admin** — reviewer (organization-wide) |
 | superadmin@demo.gov.example | **super_admin** — full write and delete |
 | superadmin2@demo.gov.example | **super_admin** — second approver (rule maker-checker demo) |
@@ -80,54 +87,133 @@ Finalization by `user` is policy-driven: set the `finalization_policy` config it
 
 ## Field-officer flow (the `user` role)
 
+Signing up lands a field officer in a four-screen application — scan, result, history, report. None of
+the reviewer/administrator surface (rule authoring, audit log, analytics, dispositions, recycle bin) is
+shown, because none of it is authority a field officer holds. `admin` and `super_admin` still sign in to
+the full casework workbench.
+
 ```
-Upload product images        front · back · top · bottom · left · right   (+ closeup / listing)
-        │                    exact duplicates are refused at upload by SHA-256
+Sign up                      creates a `user` account in its own organization; role is never
+        │                    claimed at registration
         ▼
-Image quality check          blur · too dark · label visible · orientation · glare ·
-        │                    occlusion · edge clipping · face completeness
-        │                    → per-image recapture guidance; never a legal judgement
+Scan the product             → Upload the image   ·   Click image using the camera
+        │
         ▼
-Product image analysis       computer vision (layout regions) ─┐
-        │                    OCR (tesseract, en+hi) → text ────┘
+Capture the sides            top · bottom · left · right, each optional individually
+        │                    "+ Add another side image" for front/back/close-up/other
+        │                    AT LEAST TWO images required — one face cannot show that a
+        │                    declaration is absent, only that you did not photograph it
+        │                    exact duplicate bytes are refused at upload by SHA-256
         ▼
-Structured product data      declarations, normalized + officer-correctable
+Image preparation            OpenCV/Pillow — EXIF, deskew, crop to text, upscale, CLAHE, sharpen
+        │                    every operation recorded; the prepared image kept as a derivative
         ▼
-Rule engine                  versioned rules, pinned by effective date
+OCR                          PaddleOCR (en + devanagari) in the sidecar — text recovered per face
         ▼
-Findings                     passed · failed · needs review · not assessable · not applicable
+Compliance judge             the OCR text + the FULL text of the LMPC Rules, 2011 → Gemini 3.5 Flash Lite
+        │                    structured verdict, temperature 0, statutory text hashed onto the row
         ▼
-Compliance report            overall status + outcome counts · failed rules with citations ·
-                             evidence images and extracted text · SHA-256 verification
+Verdict                      Compliance ready · Not compliance ready · Needs review
+        │                    ├─ Missing for compliance   what is absent, with rule citation + fix
+        │                    ├─ Could not be determined  where the images do not settle it
+        │                    └─ Requirements met         what the package got right
+        ▼
+Scan report                  PDF / JSON — image SHA-256s, the statutory text hash, the model
+        │                    version, and the OCR text the verdict was formed from
+        ▼
+History                      every scan the officer has run, filterable by outcome
 ```
 
-The report gives a **status and counts, not a score** (requirement EXT-07): one missing mandatory
+The verdict gives a **status and counts, not a score** (requirement EXT-07): one missing mandatory
 declaration makes a package non-compliant however many other rules pass, so a percentage would
 misrepresent the legal position.
 
-## Try the end-to-end flow
+**Two assessments, kept separate.** Alongside the AI verdict, the deterministic versioned rule engine
+runs over the same evidence and its findings are shown as a labeled cross-check. They are never merged:
+one is a model reading the statute, the other is pattern matching against configured rules, and an
+officer needs to know which is which.
 
-Sign in as **user@demo.gov.example** → **New Inspection** (pick a category; `pan_masala`/`medical_devices`/`edible_oil`
-trigger overlay routing) → upload PNG/JPEG/PDF evidence with face labels → optionally record a
-**calibration** (without one, font-size checks return **Not Assessable**) → **Run evidence processing** →
-open the **Analysis workbench** → review/correct declarations → **Apply versioned rules** → disposition
-each material finding (overrides need reasons; high-severity overrides need approval from an admin) →
-**Finalize** → open the **Report** (PDF/DOCX/CSV/JSON/manifest export + hash verification) →
-find it again via **Repository / Search**. Seeded inspections (one finalized, one open, one e-commerce)
-are ready immediately.
+**A scan report is not a finalized report.** Finalization is a legal act gated on officer review of every
+material finding, and this flow does not waive that gate — the scan report is decision support and says
+so on its face. Formal finalization stays in the reviewer's workbench.
 
-Then sign in as **admin@demo.gov.example** to see the same case read-only with the review verbs available
-(and no capture or delete controls), and as **superadmin@demo.gov.example** for user administration, the
-rule library and **Deleted Records**.
+### Statutory corpus
+
+The text the model reads lives in `server/assets/rules/`. `lmpc-2011.txt` is the Legal Metrology
+(Packaged Commodities) Rules, 2011 extracted verbatim from the source PDF. To refresh it, or to add an
+amendment, drop the PDF in the repo root and run:
+
+```bash
+node scripts/extract-rules.mjs
+```
+
+Every `.txt`/`.md` in that directory is concatenated and hashed; the hash is recorded on every verdict, so
+a report always names the exact text the model was shown and two verdicts produced against different law
+are never silently comparable.
+
+### Configuring the judge
+
+```bash
+# server/.env
+GEMINI_API_KEY=...                    # unset → deterministic fallback, labeled as not-an-AI-assessment
+GEMINI_MODEL=gemini-3.5-flash-lite    # default; any generateContent model works (e.g. gemini-3.5-flash)
+PROVIDER_COMPLIANCE=gemini            # or rule_engine to force the fallback
+```
+
+`npm test` pins `PROVIDER_COMPLIANCE=rule_engine`, so the suite never makes a live billed call.
+
+## Try it
+
+**As a field officer.** Open the app → the front door is **Create your account**. Either register, or press
+**⚡ One-click test account** (`tester@packcomply.test` / `PackComplyTest#1`) to skip straight to scanning —
+the same signup endpoint, the same `user` role, just a pre-filled form. Then **Scan the product** → choose
+upload or camera → add at least two sides → **Analyse for compliance** → read the verdict → **Download
+report (PDF)** → find it again under **History**. The seeded `server/assets/demo-labels/*.png` are legible
+synthetic labels that work end to end through real OCR.
+
+`user@demo.gov.example` also lands in this flow — it is a `user`.
+
+**As a reviewer / administrator.** Sign in as **admin@demo.gov.example** for the casework workbench:
+declarations, dispositions, overrides, finalization, notices and the audit log, read-only over capture.
+**superadmin@demo.gov.example** adds user administration, the rule library and **Deleted Records**.
+Seeded inspections (one finalized, one open, one e-commerce) are ready immediately. The full casework
+path — new inspection → evidence → calibration → processing → workbench → versioned rules → dispositions
+→ finalize → report export with hash verification → repository search — is unchanged.
 
 ## Real OCR (self-hosted, free, default)
 
-Real OCR runs out of the box: tesseract.js (WASM) in-process, English + Hindi, with language data
-committed to `server/assets/tessdata` so a fresh clone works **offline** and evidence never leaves the
-server. Upload or capture real JPEG/PNG label photos and you get real recognition with real bounding
-boxes. Limits: JPEG/PNG/BMP only (HEIC/PDF need a rasterizer) and it is not yet benchmarked against the
-PRD acceptance corpus. Set `PROVIDER_OCR=mock` for deterministic runs; verify the adapter with
-`cd server && RUN_TESSERACT_TESTS=1 npm test -- tesseract`.
+**PaddleOCR** with OpenCV/Pillow image preparation, running in the Python sidecar in
+[ocr-service/](ocr-service/) — `PROVIDER_OCR=paddle`, the default. It is reached over loopback, so
+evidence never leaves the deployment, and the models are local, so it works **offline** once they are
+cached. Upload or capture real JPEG/PNG/WebP label photos and you get real recognition with real
+bounding boxes.
+
+Every capture is prepared before it is read: EXIF orientation, deskew, crop to the text, upscale a
+small capture, then CLAHE contrast, denoise and unsharp. This is not cosmetic — a tilted shot of a
+demo label went from 7 of 8 lines recovered to 8 of 8 once deskew was working.
+
+Two properties keep that defensible:
+
+- **The original is never touched.** The prepared image is stored as an `evidence_derivatives` row
+  beside it, with its own SHA-256 and the exact ordered list of operations that produced it, so a
+  report can show both what the officer photographed and what the recogniser read.
+- **Boxes are reported against the original photograph.** Preparation rotates and crops, so the
+  service maps every box back through the inverse of its own transform. Verified to ~1 px on a
+  6°-rotated capture.
+
+English and Devanagari are separate recognition models; both run and their readings are merged per
+box, with a genuinely-Devanagari reading preferred over a Latin model's transliteration of it.
+
+Setup is `python -m venv .venv` plus `ocr-service/requirements.txt`; `npm run dev` starts the sidecar
+with the app, or `npm run ocr` alone. If it is not running, evidence processing **fails loudly** — a
+configured engine is never silently swapped for another.
+
+`PROVIDER_OCR=tesseract` keeps the previous in-process tesseract.js (WASM, eng+hin) for a deployment
+that cannot run Python; it does no image preparation and produces no derivative.
+`PROVIDER_OCR=mock` gives deterministic runs. Neither engine is benchmarked against the PRD
+acceptance corpus yet. Verify the adapters with
+`cd server && RUN_PADDLE_TESTS=1 npm test -- paddle.integration` (needs the sidecar up) or
+`RUN_TESSERACT_TESTS=1 npm test -- tesseract`.
 
 The seeded demo evidence is real, legible artwork of clearly fictional products
 (`server/assets/demo-labels/`, regenerate with `node scripts/generate-demo-labels.mjs`). Two labels are
@@ -152,11 +238,20 @@ interrupted uploads resume without duplicates. Failures stay visible — nothing
 ## Commands
 
 ```bash
+# repo root
+npm run dev         # API :4000 + web :5173 + OCR sidecar :8100 together
+npm run ocr         # just the PaddleOCR sidecar
+
 cd server
 npm run dev         # API with reload
 npm run seed        # seed database (no-op if already seeded); delete server/data to reset
-npm test            # 40 tests: engine unit tests (incl. the critical calibration pair), API/workflow/UAT tests
+npm test            # 92 tests: engine units (incl. the critical calibration pair), API/workflow/UAT,
+                    # the scan flow, and the Gemini and PaddleOCR adapters with the network stubbed
+node ../scripts/extract-rules.mjs   # (re)extract the statutory corpus into assets/rules/
 npm run typecheck
+
+# OCR sidecar (Python) — 12 tests, offline, no models needed
+../.venv/Scripts/python -m pytest ocr-service/test_preprocess.py
 
 cd web
 npm run dev / build
@@ -178,3 +273,9 @@ npm run dev / build
 - Finalized findings/reports are immutable; amendments create retained new versions; every evaluation is pinned to rule + model + engine versions.
 - Append-only, hash-chained audit trail with a verification endpoint.
 - Server-side RBAC + jurisdictional scoping on every route, including search and exports.
+- Self-registration cannot claim authority: the role is fixed server-side, and each new account gets its own
+  organization so one self-registered officer can never read another's scans.
+- Every AI verdict records the SHA-256 of the statutory text the model read, the OCR text it was given, the
+  model version, and whether a model ran at all — a verdict that cannot be reproduced is not evidence.
+- A failed compliance call is stored as a verdict carrying its error, never discarded and never rendered as a
+  compliance outcome; the scan flow offers a retry that actually re-queues the judge.

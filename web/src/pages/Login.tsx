@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { AuthContext } from '../App';
 import { t } from '../i18n';
@@ -65,6 +65,9 @@ export function Login() {
           <button className="quiet" onClick={() => setShowForm(!showForm)} aria-expanded={showForm}>
             {showForm ? 'Hide' : 'Use'} e-mail &amp; password instead
           </button>
+        </p>
+        <p className="auth-alt" style={{ textAlign: 'left', marginTop: 4 }}>
+          No account yet? <Link to="/">Create one</Link>
         </p>
         {showForm && (
           <form onSubmit={(e) => { e.preventDefault(); doLogin(email, password, 'form'); }}>
