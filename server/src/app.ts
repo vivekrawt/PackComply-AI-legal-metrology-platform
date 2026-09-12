@@ -11,6 +11,7 @@ import { coreRouter } from './routes/core.js';
 import { caseworkRouter } from './routes/casework.js';
 import { rulesRouter } from './routes/rules.js';
 import { scanRouter } from './routes/scans.js';
+import { orgRouter } from './routes/org.js';
 import { config } from './core/config.js';
 import { logger } from './core/logger.js';
 
@@ -47,7 +48,7 @@ export function createApp() {
     next();
   });
 
-  app.use('/api/v1', csrfHeader, coreRouter, caseworkRouter, rulesRouter, scanRouter);
+  app.use('/api/v1', csrfHeader, coreRouter, caseworkRouter, rulesRouter, scanRouter, orgRouter);
 
   // Serve the built PWA when present (single-container deployment).
   const webDist = path.resolve(process.cwd(), '../web/dist');

@@ -64,12 +64,14 @@ export function createInspection(db: DB, user: SessionUser, input: CreateInspect
   }
 
   db.prepare(
-    `INSERT INTO inspections (id, type, status, event_date, org_id, state, district, office, location,
+    `INSERT INTO inspections (id, type, status, event_date, org_id, team_id, state, district, office, location,
        seller_entity_id, assigned_to, due_date, priority, checklist_json, parent_inspection_id,
        reinspection_of_finding_id, notes, created_by, client_ref, created_at, updated_at)
-     VALUES (?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    id, input.type, eventDate, user.orgId,
+    // The capturing auditor's team owns the case; this is what routes it to the
+    // right admin's queue, so it is stamped at creation and never inferred later.
+    id, input.type, eventDate, user.orgId, user.teamId ?? null,
     input.state ?? user.state, input.district ?? user.district, input.office ?? user.office,
     input.location ?? null, sellerEntityId, input.assignedTo ?? user.id,
     input.dueDate ?? null, input.priority ?? 'normal',

@@ -419,4 +419,83 @@ CREATE TABLE compliance_verdicts (
 CREATE INDEX idx_verdict_inspection ON compliance_verdicts(inspection_id, created_at);
 `,
   },
+  {
+    // Reviewer sign-off on a scan — the `admin` role's actual job, made recordable.
+    //
+    // A decision pins the verdict it was taken against. Re-analysing a package
+    // mints a new verdict, and a sign-off recorded against the previous one is
+    // then stale rather than still standing: a reviewer must never appear to have
+    // accepted a reading they never saw. The table is append-only in practice —
+    // the newest row is the current decision and the older rows are the history of
+    // how the reviewer got there, which is what an audit of the audit needs.
+    id: '006_scan_reviews',
+    sql: `
+CREATE TABLE scan_reviews (
+  id TEXT PRIMARY KEY,
+  inspection_id TEXT NOT NULL REFERENCES inspections(id),
+  verdict_id TEXT REFERENCES compliance_verdicts(id),
+  decision TEXT NOT NULL,          -- accepted|rejected|recapture_requested
+  reason TEXT NOT NULL,
+  reviewer_id TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_scan_review_insp ON scan_reviews(inspection_id, created_at);
+`,
+  },
+  {
+    // Teams: the organizational layer between an organization and its people.
+    //
+    //   super_admin → admin → auditor
+    //
+    // An organization is the tenant; a team is a unit of work inside it. An admin
+    // reviews the auditors on their team and nobody else's, so `team_id` on both
+    // users and inspections is what the scope predicate now turns on.
+    //
+    // Every existing organization gets one team and every existing admin and auditor
+    // is placed in it, because an admin with no team sees nothing by design — failing
+    // closed is right for a permission boundary, but it must not silently empty the
+    // queue of a database that predates teams. super_admin is deliberately left
+    // team-less: it sits above the teams, not in one.
+    //
+    // `reviewer_role` records the authority a decision was taken under. Roles change;
+    // the authority a past decision carried must not change with them, and the
+    // precedence rule (a super_admin decision outranks an admin's) reads this column
+    // rather than the reviewer's role today.
+    id: '007_teams_and_hierarchy',
+    sql: `
+CREATE TABLE teams (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL REFERENCES organizations(id),
+  name TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'active',      -- active|archived
+  created_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_teams_org ON teams(org_id, status);
+
+ALTER TABLE users ADD COLUMN team_id TEXT REFERENCES teams(id);
+ALTER TABLE inspections ADD COLUMN team_id TEXT REFERENCES teams(id);
+ALTER TABLE scan_reviews ADD COLUMN reviewer_role TEXT;
+
+INSERT INTO teams (id, org_id, name, description, status, created_at, updated_at)
+SELECT 'team_' || o.id, o.id, 'General',
+       'Created automatically when teams were introduced; existing admins and auditors were placed here.',
+       'active', strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  FROM organizations o;
+
+UPDATE users SET team_id = 'team_' || org_id WHERE role IN ('user','admin') AND team_id IS NULL;
+
+UPDATE inspections
+   SET team_id = (SELECT u.team_id FROM users u WHERE u.id = inspections.created_by)
+ WHERE team_id IS NULL;
+
+UPDATE scan_reviews
+   SET reviewer_role = (SELECT u.role FROM users u WHERE u.id = scan_reviews.reviewer_id)
+ WHERE reviewer_role IS NULL;
+
+CREATE INDEX idx_users_team ON users(team_id, role);
+CREATE INDEX idx_insp_team ON inspections(team_id, status);
+`,
+  },
 ];

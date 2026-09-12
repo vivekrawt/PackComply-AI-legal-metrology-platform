@@ -15,15 +15,15 @@ export const ROLES = ['user', 'admin', 'super_admin'] as const;
 export type Role = (typeof ROLES)[number];
 
 export const ROLE_LABELS: Record<Role, string> = {
-  user: 'User (field officer)',
-  admin: 'Admin (reviewer)',
+  user: 'Auditor (field agent)',
+  admin: 'Admin (team reviewer)',
   super_admin: 'Super administrator',
 };
 
 export const ROLE_DESCRIPTIONS: Record<Role, string> = {
-  user: 'Runs inspections: create a case, capture package images, run the compliance check, correct extracted declarations.',
-  admin: 'Reviews the work only: read cases, dispose findings, approve overrides, finalize reports, issue notices, read the audit log.',
-  super_admin: 'Full control: everything above, plus rule publication, user and configuration administration, and deletion.',
+  user: 'Does the auditing: create a case, capture package images, run the compliance check, correct extracted declarations.',
+  admin: 'Reviews their own team only: sign off scans, dispose findings, approve overrides, finalize reports, issue notices, read the audit log.',
+  super_admin: 'Runs the system: teams, people, rules, configuration, retention and deletion — everything except performing the audit itself.',
 };
 
 export const PERMISSIONS = [
@@ -43,6 +43,7 @@ export const PERMISSIONS = [
   'finding.disposition', // confirm/dismiss/defer
   'finding.override',
   'finding.approve_override', // second-level approval
+  'scan.review', // reviewer sign-off on a field officer's scan
   'report.finalize',
   'report.read',
   'report.export',
@@ -58,6 +59,8 @@ export const PERMISSIONS = [
   'rule.rollback',
   'rule.test',
   'rule.delete',
+  'team.read',   // see your own team and its members
+  'team.manage', // create teams, rename them, move people between them
   'admin.users',
   'admin.users.delete',
   'admin.config',
@@ -88,17 +91,32 @@ const ADMIN_PERMISSIONS: Permission[] = [
   'inspection.read', 'inspection.annotate', 'inspection.assign', 'inspection.reinspect',
   'evidence.read',
   'finding.disposition', 'finding.override', 'finding.approve_override',
+  'scan.review',
   'report.finalize', 'report.read', 'report.export', 'report.amend',
   'notice.manage',
   'search.read', 'analytics.view', 'rule.read', 'models.read', 'audit.read',
+  'team.read',
+];
+
+// The work a super administrator does NOT do: the auditing itself.
+//
+// This is the one deliberate hole in "super_admin holds everything by
+// construction". The hierarchy is super_admin → admin → auditor, and only the
+// auditor captures evidence and runs the checks; an authority that can also
+// manufacture the record it later signs off is not a separation of duties at all.
+// Everything outside this list is still granted automatically, so a newly added
+// permission is never accidentally left unassigned.
+const CAPTURE_PERMISSIONS: Permission[] = [
+  'inspection.create', 'inspection.edit', 'evidence.upload',
+  'processing.run', 'declaration.edit', 'evaluation.run',
 ];
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   user: USER_PERMISSIONS,
   admin: ADMIN_PERMISSIONS,
-  // Super admin holds the full set — write and delete — by construction, so a new
-  // permission is never accidentally left unassigned.
-  super_admin: [...PERMISSIONS],
+  // Everything except the capture verbs — governance, administration and deletion
+  // by construction, minus the auditing work itself.
+  super_admin: PERMISSIONS.filter((p) => !CAPTURE_PERMISSIONS.includes(p)),
 };
 
 export function roleHas(role: Role, perm: Permission): boolean {

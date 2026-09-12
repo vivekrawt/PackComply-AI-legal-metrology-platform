@@ -13,6 +13,10 @@ export interface SessionUser {
   name: string;
   role: Role;
   orgId: string;
+  // The team this person works in. An admin reviews their team's work and nobody
+  // else's, so this is part of the authority a session carries. null for
+  // super_admin, which sits above the teams rather than in one.
+  teamId: string | null;
   state: string | null;
   district: string | null;
   office: string | null;
@@ -22,16 +26,17 @@ export function createUser(
   db: DB,
   u: {
     email: string; name: string; password: string; role: Role; orgId: string;
+    teamId?: string | null;
     state?: string | null; district?: string | null; office?: string | null; status?: string;
   },
 ): string {
   const id = newId('usr');
   const t = now();
   db.prepare(
-    `INSERT INTO users (id, email, name, password_hash, role, org_id, state, district, office, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO users (id, email, name, password_hash, role, org_id, team_id, state, district, office, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(id, u.email.toLowerCase(), u.name, hashPassword(u.password), u.role, u.orgId,
-    u.state ?? null, u.district ?? null, u.office ?? null, u.status ?? 'active', t, t);
+    u.teamId ?? null, u.state ?? null, u.district ?? null, u.office ?? null, u.status ?? 'active', t, t);
   return id;
 }
 
@@ -58,12 +63,20 @@ export function signup(
   if (existing) throw conflict('An account already exists for this e-mail address');
 
   const orgId = newId('org');
+  const teamId = newId('team');
   const t = now();
   db.transaction(() => {
     db.prepare('INSERT INTO organizations (id, name, kind, created_at) VALUES (?, ?, ?, ?)')
       .run(orgId, input.organizationName?.trim() || `${input.name} (self-registered)`, 'field', t);
+    // A one-person org still gets a team, so the org is well formed the moment an
+    // administrator moves the account into a real agency: there is no "team-less"
+    // state for the hierarchy to fall through.
+    db.prepare(
+      `INSERT INTO teams (id, org_id, name, description, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'active', ?, ?)`,
+    ).run(teamId, orgId, 'General', 'Default team created at self-registration.', t, t);
     createUser(db, {
-      email, name: input.name, password: input.password, role: 'user', orgId,
+      email, name: input.name, password: input.password, role: 'user', orgId, teamId,
     });
   })();
 
@@ -167,19 +180,37 @@ export function resolveSession(db: DB, sessionId: string): SessionUser | null {
 function toSessionUser(u: any): SessionUser {
   return {
     id: u.id, email: u.email, name: u.name, role: u.role,
-    orgId: u.org_id, state: u.state, district: u.district, office: u.office,
+    orgId: u.org_id, teamId: u.team_id ?? null,
+    state: u.state, district: u.district, office: u.office,
   };
 }
 
-// Scope predicate (IAM-03): a `user` sees records within their own
-// org/state/district/office hierarchy plus inspections assigned to them; `admin` and
-// `super_admin` need the whole organization tree to review and administer it. Every
-// caller of this predicate also excludes soft-deleted records, so a deleted inspection
-// disappears from lists, search, analytics and scope checks in one place.
+// Scope predicate (IAM-03), one per level of the hierarchy:
+//
+//   super_admin  the whole organization — it administers the organization, so it
+//                must be able to see across every team in it.
+//   admin        its own team, and nothing else. An admin reviews the auditors
+//                working under it; another admin's cases are not its business.
+//   user         records within its own org/state/district/office plus anything
+//                assigned to it — an auditor's own work.
+//
+// An admin with no team matches nothing. That is deliberate: a permission boundary
+// that falls back to "everything" when its input is missing is not a boundary.
+// Migration 007 places every existing admin in a team so this cannot strand anyone.
+//
+// Every caller also excludes soft-deleted records, so a deleted inspection disappears
+// from lists, search, analytics and scope checks in one place.
 export function scopeWhere(user: SessionUser, alias = 'i'): { sql: string; params: unknown[] } {
   const live = `${alias}.deleted_at IS NULL`;
-  if (user.role === 'admin' || user.role === 'super_admin') {
+  if (user.role === 'super_admin') {
     return { sql: `(${alias}.org_id = ? AND ${live})`, params: [user.orgId] };
+  }
+  if (user.role === 'admin') {
+    if (!user.teamId) return { sql: '(1 = 0)', params: [] };
+    return {
+      sql: `(${alias}.org_id = ? AND ${alias}.team_id = ? AND ${live})`,
+      params: [user.orgId, user.teamId],
+    };
   }
   const clauses: string[] = [`${alias}.org_id = ?`];
   const params: unknown[] = [user.orgId];
