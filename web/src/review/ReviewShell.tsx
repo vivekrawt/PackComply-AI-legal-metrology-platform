@@ -44,7 +44,7 @@ export function ReviewShell({ user, demo, mockComponents }: {
       const p = isSuper
         ? api.get<{ cases: AttentionCase[] }>('/performance/attention').then((r) => r.cases.length)
         : api.get<{ scans: ScanSummary[] }>('/scans?limit=200')
-          .then((r) => r.scans.filter((s) => !s.review && s.verdict).length);
+          .then((r) => r.scans.filter((s) => s.verdict && s.submittedAt && !s.review).length);
       p.then((n) => { if (alive) setBadge(n); }).catch(() => { /* the rail shows no count */ });
     };
     tick();
@@ -79,7 +79,7 @@ export function ReviewShell({ user, demo, mockComponents }: {
                 <span className="rv-nav-ico" aria-hidden="true">◎</span>Overview
               </NavLink>
               <NavLink to="/app/attention">
-                <span className="rv-nav-ico" aria-hidden="true">!</span>Needs attention{count(badge)}
+                <span className="rv-nav-ico" aria-hidden="true">↑</span>Referred to you{count(badge)}
               </NavLink>
               <NavLink to="/app/all-scans">
                 <span className="rv-nav-ico" aria-hidden="true">▤</span>All scans

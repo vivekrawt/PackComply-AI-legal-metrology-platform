@@ -55,6 +55,10 @@ const RESPONSE_SCHEMA = {
     overall: { type: 'STRING', enum: ['compliant', 'non_compliant', 'needs_review'] },
     summary: { type: 'STRING' },
     confidence: { type: 'NUMBER' },
+    // The package's own identity, read off the label. Not part of the compliance
+    // determination — it is how an officer finds this scan again in a list.
+    productName: { type: 'STRING' },
+    brand: { type: 'STRING' },
     checks: {
       type: 'ARRAY',
       items: {
@@ -110,6 +114,11 @@ SECONDARY CROSS-CHECK — output of this system's deterministic pattern-matching
 It is keyword-based and frequently wrong about presence; treat it as a hint about what to look
 for, never as evidence. Your own reading of the OCR text above governs.
 ${engine}
+
+Also identify the package itself: productName is the common or generic name of the commodity as
+declared on it (for example "Instant Noodles", "Refined Sunflower Oil"), and brand is the brand or
+trade name if one is shown. These label the record so an officer can find it again; they are not part
+of the compliance determination. Leave either empty if the package does not show it.
 
 Assess this package against the statutory corpus and return the structured verdict.`;
 }
@@ -338,6 +347,8 @@ export class GeminiComplianceProvider implements ComplianceJudgeProvider {
       summary: String(parsed.summary ?? ''),
       confidence: Number.isFinite(confidence) ? Math.min(Math.max(confidence, 0), 1) : 0.5,
       checks,
+      productName: clean(parsed.productName) || null,
+      brand: clean(parsed.brand) || null,
       raw: { usageMetadata: payload?.usageMetadata ?? null, finishReason: candidate?.finishReason ?? null },
     };
   }

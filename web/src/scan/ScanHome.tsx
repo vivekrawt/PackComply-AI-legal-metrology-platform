@@ -13,8 +13,15 @@ import { useAsync } from '../components/common';
 export function ScanHome() {
   const nav = useNavigate();
   const cap = useAsync(() => api.get<ScanCapability>('/scans/capability'), []);
-  const recent = useAsync(() => api.get<{ scans: ScanSummary[] }>('/scans?limit=5'), []);
-  const scans = recent.data?.scans ?? [];
+  const recent = useAsync(() => api.get<{ scans: ScanSummary[] }>('/scans?limit=50'), []);
+  const all = recent.data?.scans ?? [];
+  const scans = all.slice(0, 5);
+  // Packages a reviewer has handed back. This is work assigned to this officer, so
+  // it sits above the scan button rather than below the fold — a re-check that is
+  // never noticed is the same as one that was never asked for.
+  const needsRecheck = all.filter(
+    (s) => s.review?.decision === 'recapture_requested' && !s.review.stale,
+  );
 
   // Counts over the recent window only — labelled as such, never presented as
   // enforcement statistics.
@@ -31,6 +38,22 @@ export function ScanHome() {
 
   return (
     <div className="field-page">
+      {needsRecheck.length > 0 && (
+        <section className="recheck-banner">
+          <h2>
+            <span aria-hidden="true">↺</span>
+            {needsRecheck.length} product{needsRecheck.length === 1 ? '' : 's'} to check again
+          </h2>
+          <p>
+            Your admin sent {needsRecheck.length === 1 ? 'this one' : 'these'} back — photograph
+            the package again and send it for review.
+          </p>
+          <ul className="scan-list">
+            {needsRecheck.map((s) => <ScanRow key={s.scanId} scan={s} />)}
+          </ul>
+        </section>
+      )}
+
       <section className="scan-hero">
         <div className="scan-hero-copy">
           <span className="scan-hero-badge">

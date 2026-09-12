@@ -6,7 +6,8 @@ import {
 } from '../api';
 import { AuthContext } from '../App';
 import { ErrorText, useAsync } from '../components/common';
-import { MagnitudeBar, StatTiles, StatusChip, fmtWhen, scanStatTiles } from './widgets';
+import type { AuditorPeriods } from '../api';
+import { MagnitudeBar, PeriodPanel, StatTiles, StatusChip, fmtWhen, scanStatTiles } from './widgets';
 
 // The people sections: Auditors do the work, Admins review it.
 //
@@ -199,6 +200,7 @@ interface AuditorDetailData {
     teamId: string | null; teamName: string | null; scope: string | null; createdAt: string;
   };
   stats: ScanStats;
+  periods: AuditorPeriods;
   recent: { scanId: string; createdAt: string; product: string | null; verdict: string | null; decision: string | null }[];
 }
 
@@ -212,7 +214,7 @@ export function AuditorDetail() {
   if (!d.data) {
     return <div className="rv-body"><ErrorText error={d.error} />{!d.error && <p className="muted">Loading…</p>}</div>;
   }
-  const { person, stats, recent } = d.data;
+  const { person, stats, periods, recent } = d.data;
 
   return (
     <>
@@ -236,6 +238,11 @@ export function AuditorDetail() {
 
       <div className="rv-body">
         <ErrorText error={error} />
+
+        <h2 className="rv-section-title">Throughput</h2>
+        <PeriodPanel periods={periods} />
+
+        <h2 className="rv-section-title">All time</h2>
         <StatTiles tiles={scanStatTiles(stats)} />
 
         <section className="rv-panel">

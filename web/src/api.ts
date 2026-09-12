@@ -58,9 +58,20 @@ export interface Person {
 // Counts, never a score: these describe how much work moved, not how well.
 export interface ScanStats {
   total: number; analysed: number; inProgress: number; awaitingReview: number;
-  accepted: number; rejected: number; sentBack: number;
+  accepted: number; rejected: number; sentBack: number; escalated: number;
   compliant: number; nonCompliant: number; needsReview: number;
   staleDecisions: number; lastActivityAt: string | null;
+}
+
+// What one auditor got through in a calendar period. "Completed" is when the
+// analysis finished, not when the case was opened.
+export interface PeriodStats {
+  captured: number; completed: number;
+  accepted: number; rejected: number; sentBack: number;
+}
+
+export interface AuditorPeriods {
+  today: PeriodStats; week: PeriodStats; month: PeriodStats;
 }
 
 export interface DecisionStats {
@@ -84,19 +95,14 @@ export interface AdminRow {
   createdAt: string; queueAwaiting: number; decisions: DecisionStats;
 }
 
-export type AttentionReason = 'stale_decision' | 'no_active_admin' | 'awaiting_too_long';
-
+// A case an admin referred upward. Nothing else reaches this list — it is a queue
+// of asks from named people, not a pile the system decided was interesting.
 export interface AttentionCase {
-  scanId: string; reason: AttentionReason; detail: string; createdAt: string;
+  scanId: string; createdAt: string;
   teamId: string | null; teamName: string | null; officerName: string | null;
-  product: string | null; verdict: VerdictOverall | null; decision: ReviewDecision | null;
+  product: string | null; verdict: VerdictOverall | null;
+  escalatedBy: string | null; escalatedAt: string; escalationReason: string;
 }
-
-export const ATTENTION_META: Record<AttentionReason, { label: string; tone: string }> = {
-  stale_decision: { label: 'Decision superseded', tone: 'needs_review' },
-  no_active_admin: { label: 'No admin to review it', tone: 'failed' },
-  awaiting_too_long: { label: 'Waiting too long', tone: 'needs_review' },
-};
 
 export interface OrgOverview {
   scans: ScanStats;
@@ -166,7 +172,9 @@ export interface ScanOcr {
 // A decision is recorded against the verdict it was taken on. `stale` means the
 // package has been re-analysed since, so the decision stands against a reading
 // that is no longer the current one — never silently carried forward.
-export type ReviewDecision = 'accepted' | 'rejected' | 'recapture_requested';
+// `escalated` is an admin referring a case upward. It leaves their queue and lands
+// in the super administrator's, who alone can clear it.
+export type ReviewDecision = 'accepted' | 'rejected' | 'recapture_requested' | 'escalated';
 
 export interface ScanReview {
   id: string; decision: ReviewDecision; reason: string;
@@ -174,6 +182,9 @@ export interface ScanReview {
   // The authority the decision was taken under, as it stood at the time.
   // `final` means a super administrator decided it: no admin can replace it.
   reviewerRole: Role | null; final: boolean;
+  // Referred upward and waiting on a super administrator: the admin who raised it
+  // cannot decide it further until they answer.
+  awaitingSuperAdmin: boolean;
   verdictId: string | null; stale: boolean; createdAt: string;
 }
 
@@ -194,7 +205,11 @@ export const REVIEW_META: Record<ReviewDecision, {
   },
   recapture_requested: {
     label: 'Sent back', icon: '↺', tone: 'needs_review', verb: 'Send back',
-    blurb: 'The images cannot settle the question — the officer must re-photograph the package.',
+    blurb: 'The images cannot settle the question — the auditor must re-photograph the package.',
+  },
+  escalated: {
+    label: 'Referred up', icon: '↑', tone: 'not_assessable', verb: 'Refer to super administrator',
+    blurb: 'Beyond what you should settle alone — hand the decision to a super administrator.',
   },
 };
 
@@ -209,6 +224,8 @@ export interface Scan {
   reportId: string | null;
   officer: { id: string; name: string; email: string } | null;
   team: { id: string; name: string } | null;
+  // Null until the auditor hands it over. A scan reaches no review queue before that.
+  submittedAt: string | null;
   review: ScanReview | null;
   reviews: ScanReview[];
 }
@@ -220,6 +237,7 @@ export interface ScanSummary {
   officerName: string | null;
   teamId: string | null;
   teamName: string | null;
+  submittedAt: string | null;
   review: ScanReviewSummary | null;
 }
 

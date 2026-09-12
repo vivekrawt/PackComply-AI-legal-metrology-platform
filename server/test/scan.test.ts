@@ -378,6 +378,8 @@ describe('reviewer sign-off', () => {
       .field('side', 'top');
     await agent.post(`/api/v1/scans/${scanId}/analyze`).set(H);
     await drainJobs(getDb());
+    // Mirror the real flow: a scan reaches a reviewer only once its auditor sends it.
+    await agent.post(`/api/v1/scans/${scanId}/submit`).set(H);
     return scanId;
   }
 
@@ -541,6 +543,114 @@ describe('reviewer sign-off', () => {
     const again = await sa.post(`/api/v1/scans/${scanId}/review`).set(H)
       .send({ decision: 'accepted', reason: 'Reconsidered after reviewing the close-up face.' });
     expect(again.status).toBe(201);
+  });
+
+  it('lets an admin refer a case up, and only a super administrator can clear it', async () => {
+    const scanId = await analysedScan(demoOfficer, 'Referred Case');
+
+    const up = await reviewer.post(`/api/v1/scans/${scanId}/review`).set(H)
+      .send({ decision: 'escalated', reason: 'The importer declaration is ambiguous; this needs your authority.' });
+    expect(up.status).toBe(201);
+    expect(up.body.decision).toBe('escalated');
+    expect(up.body.awaitingSuperAdmin).toBe(true);
+
+    // Having handed the case over, the admin cannot quietly decide it anyway —
+    // otherwise referring it upward would mean nothing.
+    const retry = await reviewer.post(`/api/v1/scans/${scanId}/review`).set(H)
+      .send({ decision: 'accepted', reason: 'Changed my mind after referring it upward.' });
+    expect(retry.status).toBe(403);
+    expect(retry.body.error.message).toMatch(/referred/i);
+
+    // It reaches the super administrator with who raised it and why.
+    const { agent: sa } = await signIn('superadmin@demo.gov.example');
+    const att = await sa.get('/api/v1/performance/attention').set(H);
+    const row = att.body.cases.find((c: any) => c.scanId === scanId);
+    expect(row).toBeTruthy();
+    expect(row.escalatedBy).toMatch(/Rohan/);
+    expect(row.escalationReason).toMatch(/ambiguous/i);
+
+    // Their decision clears it, outranks the admin, and takes it off the list.
+    const cleared = await sa.post(`/api/v1/scans/${scanId}/review`).set(H)
+      .send({ decision: 'rejected', reason: 'Reviewed the importer question; the declaration is defective.' });
+    expect(cleared.status).toBe(201);
+    expect(cleared.body.final).toBe(true);
+    const after = await sa.get('/api/v1/performance/attention').set(H);
+    expect(after.body.cases.some((c: any) => c.scanId === scanId)).toBe(false);
+  });
+
+  it('has nobody above a super administrator to refer a case to', async () => {
+    const scanId = await analysedScan(demoOfficer, 'No Higher Authority');
+    const { agent: sa } = await signIn('superadmin@demo.gov.example');
+    const res = await sa.post(`/api/v1/scans/${scanId}/review`).set(H)
+      .send({ decision: 'escalated', reason: 'There is nobody above me to refer this to.' });
+    expect(res.status).toBe(400);
+  });
+
+  it('allows only one admin per team', async () => {
+    const { agent: sa } = await signIn('superadmin@demo.gov.example');
+    const team = await sa.post('/api/v1/teams').set(H).send({ name: `Solo Team ${Date.now()}` });
+    expect(team.status).toBe(201);
+
+    const users = (await sa.get('/api/v1/admin/users').set(H)).body.users;
+    const pune = users.find((u: any) => u.email === 'admin@demo.gov.example');
+    const blr = users.find((u: any) => u.email === 'admin.ka@demo.gov.example');
+    const puneHome = pune.team_id;
+
+    expect((await sa.post(`/api/v1/teams/${team.body.id}/members`).set(H)
+      .send({ userId: pune.id })).status).toBe(200);
+
+    const second = await sa.post(`/api/v1/teams/${team.body.id}/members`).set(H)
+      .send({ userId: blr.id });
+    expect(second.status).toBe(409);
+    expect(second.body.error.message).toMatch(/one admin/i);
+
+    // Put the reviewer back so the rest of the suite sees the seeded arrangement.
+    expect((await sa.post(`/api/v1/teams/${puneHome}/members`).set(H)
+      .send({ userId: pune.id })).status).toBe(200);
+  });
+
+  it('keeps a scan out of the review queue until the auditor sends it', async () => {
+    const scanId = (await demoOfficer.post('/api/v1/scans').set(H).send({ product: { brand: 'Unsent' } })).body.scanId;
+    await demoOfficer.post(`/api/v1/scans/${scanId}/images`).set(H)
+      .attach('file', png('unsent-top'), { filename: 'top.png', contentType: 'image/png' })
+      .field('side', 'top');
+
+    // Nothing to send before it has been analysed.
+    const early = await demoOfficer.post(`/api/v1/scans/${scanId}/submit`).set(H);
+    expect(early.status).toBe(422);
+
+    await demoOfficer.post(`/api/v1/scans/${scanId}/analyze`).set(H);
+    await drainJobs(getDb());
+
+    // Analysis finishing is the machine being done, not the auditor.
+    const beforeSend = await reviewer.get('/api/v1/scans?limit=200').set(H);
+    expect(beforeSend.body.scans.find((s: any) => s.scanId === scanId).submittedAt).toBeNull();
+
+    // Only the auditor who captured it can hand it over.
+    expect((await reviewer.post(`/api/v1/scans/${scanId}/submit`).set(H)).status).toBe(403);
+
+    const sent = await demoOfficer.post(`/api/v1/scans/${scanId}/submit`).set(H);
+    expect(sent.status).toBe(200);
+    expect(sent.body.submittedAt).toBeTruthy();
+
+    const afterSend = await reviewer.get('/api/v1/scans?limit=200').set(H);
+    expect(afterSend.body.scans.find((s: any) => s.scanId === scanId).submittedAt).toBeTruthy();
+  });
+
+  it('leaves a super administrator’s send-back open for the admin and the auditor', async () => {
+    const scanId = await analysedScan(demoOfficer, 'Send Back Case');
+    const { agent: sa } = await signIn('superadmin@demo.gov.example');
+
+    const back = await sa.post(`/api/v1/scans/${scanId}/review`).set(H)
+      .send({ decision: 'recapture_requested', reason: 'The back face is unreadable; photograph it again.' });
+    expect(back.status).toBe(201);
+    // Sending a package back is an instruction to go and re-photograph it, so the
+    // work continues — locking it would strand the case with nobody able to move it.
+    expect(back.body.final).toBe(false);
+
+    const adminActs = await reviewer.post(`/api/v1/scans/${scanId}/review`).set(H)
+      .send({ decision: 'accepted', reason: 'Re-read the close-up; the declaration is legible after all.' });
+    expect(adminActs.status).toBe(201);
   });
 
   it('refuses a sign-off on a scan that has never been analysed', async () => {

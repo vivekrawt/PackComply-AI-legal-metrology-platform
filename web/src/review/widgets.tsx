@@ -1,5 +1,5 @@
 import React from 'react';
-import type { ScanStats } from '../api';
+import type { AuditorPeriods, PeriodStats, ScanStats } from '../api';
 
 // Shared presentation for the console's numbers.
 //
@@ -45,7 +45,47 @@ export function scanStatTiles(s: ScanStats): Tile[] {
     { label: 'Accepted', value: s.accepted, tone: 'ok' },
     { label: 'Rejected', value: s.rejected, tone: 'bad' },
     { label: 'Sent back', value: s.sentBack, tone: 'warn' },
+    { label: 'Referred up', value: s.escalated, hint: 'Passed to a super administrator to decide' },
   ];
+}
+
+// What an auditor got through today, this week and this month. Calendar periods,
+// so "this week" means the week the reader is standing in.
+const PERIOD_LABELS: { key: keyof AuditorPeriods; label: string }[] = [
+  { key: 'today', label: 'Today' },
+  { key: 'week', label: 'This week' },
+  { key: 'month', label: 'This month' },
+];
+
+export function PeriodPanel({ periods }: { periods: AuditorPeriods }) {
+  const cols: { key: keyof PeriodStats; label: string }[] = [
+    { key: 'completed', label: 'Completed' },
+    { key: 'captured', label: 'Captured' },
+    { key: 'accepted', label: 'Accepted' },
+    { key: 'rejected', label: 'Rejected' },
+    { key: 'sentBack', label: 'Sent back' },
+  ];
+  return (
+    <div className="rv-periods">
+      {PERIOD_LABELS.map(({ key, label }) => {
+        const p = periods[key];
+        return (
+          <div className="rv-period" key={key}>
+            <h3>{label}</h3>
+            <b className="rv-period-hero">{p.completed}</b>
+            <span className="rv-period-hero-label">completed</span>
+            <dl>
+              {cols.slice(1).map((c) => (
+                <React.Fragment key={c.key}>
+                  <dt>{c.label}</dt><dd>{p[c.key]}</dd>
+                </React.Fragment>
+              ))}
+            </dl>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 // A magnitude bar for a table row. One hue, always beside its own number, so the

@@ -152,6 +152,20 @@ export function assignUserToTeam(
     const team = db.prepare('SELECT id FROM teams WHERE id = ? AND org_id = ?')
       .get(teamId, actor.orgId);
     if (!team) throw notFound('Team not found');
+    // A team has exactly one admin, so "the admin of this team" is always an
+    // unambiguous person and an auditor always knows who reviews their work.
+    if (target.role === 'admin') {
+      const sitting = db.prepare(
+        `SELECT name FROM users WHERE team_id = ? AND role = 'admin' AND id <> ?
+           AND status != 'offboarded'`,
+      ).get(teamId, userId) as { name: string } | undefined;
+      if (sitting) {
+        throw conflict(
+          `${sitting.name} already runs this team, and a team has one admin. `
+          + 'Move them off it first, or choose another team.',
+        );
+      }
+    }
   }
   db.prepare('UPDATE users SET team_id = ?, updated_at = ? WHERE id = ?')
     .run(teamId, now(), userId);

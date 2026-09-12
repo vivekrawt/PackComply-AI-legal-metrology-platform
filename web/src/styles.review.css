@@ -247,6 +247,23 @@ table.data.rv-perf tbody td:first-child { min-width: 190px; }
 .rv-people h3 { margin: 14px 0 0; }
 
 .rv-badge.capturing { background: var(--gray-bg); color: var(--ink-soft); border-color: var(--line); }
+.rv-badge.escalated { background: #e9e4f5; color: #4d3f80; border-color: #c8bde6; }
+
+/* ---- Referring a case upward ---- */
+.rv-decision.on.escalated { border-color: #4d3f80; background: #e9e4f5; }
+.rv-decision.on.escalated .rv-decision-ico { background: #4d3f80; color: #fff; }
+.rv-current.escalated { background: #e9e4f5; border-color: #c8bde6; }
+.rv-history li.escalated { border-left-color: #4d3f80; }
+
+/* ---- Auditor throughput by calendar period ---- */
+.rv-periods { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.rv-period { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.rv-period h3 { margin: 0 0 6px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-soft); }
+.rv-period-hero { display: block; font-size: 2rem; line-height: 1.05; color: var(--navy); font-variant-numeric: tabular-nums; }
+.rv-period-hero-label { display: block; font-size: 0.76rem; color: var(--ink-soft); margin-bottom: 10px; }
+.rv-period dl { display: grid; grid-template-columns: 1fr max-content; gap: 3px 10px; margin: 0; padding-top: 10px; border-top: 1px solid var(--line); }
+.rv-period dt { color: var(--ink-soft); font-size: 0.78rem; }
+.rv-period dd { margin: 0; font-size: 0.8rem; font-weight: 700; color: var(--navy); font-variant-numeric: tabular-nums; text-align: right; }
 .rv-final-tag {
   margin-left: 7px; background: var(--navy); color: #fff; border-radius: 999px;
   padding: 1px 8px; font-size: 0.66rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em;

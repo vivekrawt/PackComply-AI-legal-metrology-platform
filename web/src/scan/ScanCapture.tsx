@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, SIDE_LABELS, type ScanCapability } from '../api';
 import { ErrorText, useAsync } from '../components/common';
 import { SideCamera } from './SideCamera';
@@ -35,10 +35,15 @@ const emptySlot = (side: string): Slot => ({
 export function ScanCapture() {
   const nav = useNavigate();
   const cap = useAsync(() => api.get<ScanCapability>('/scans/capability'), []);
+  const [params] = useSearchParams();
+  // ?scan=<id> adds faces to a scan that already exists — the route back in when a
+  // reviewer sends a package back for re-photographing, rather than making the
+  // auditor start a second record for the same product.
+  const addingTo = params.get('scan');
   const [phase, setPhase] = React.useState<Phase>('source');
   const [source, setSource] = React.useState<Source>('upload');
   const [slots, setSlots] = React.useState<Slot[]>([]);
-  const [scanId, setScanId] = React.useState<string | null>(null);
+  const [scanId, setScanId] = React.useState<string | null>(addingTo);
   const [cameraFor, setCameraFor] = React.useState<string | null>(null);
   const [brand, setBrand] = React.useState('');
   const [error, setError] = React.useState<unknown>(null);
@@ -128,7 +133,7 @@ export function ScanCapture() {
     return (
       <div className="field-page narrow">
         <button className="link-back" onClick={() => nav('/app')}>← Back</button>
-        <h1>Scan the product</h1>
+        <h1>{addingTo ? 'Photograph this package again' : 'Scan the product'}</h1>
         <p className="muted">How would you like to add the package images?</p>
         <div className="source-choice">
           <button onClick={() => { setSource('upload'); setPhase('capture'); }}>

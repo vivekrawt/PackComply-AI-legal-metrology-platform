@@ -64,7 +64,7 @@ The web UI renders navigation and buttons from the permission list the server re
 | Role | What it is for | Can | Cannot |
 |---|---|---|---|
 | **user** (auditor / field agent) | Does the work. Self-registration always produces this role, in its own organization. Signs in to the **scan flow**, not a console | Create scans, capture/upload evidence, run processing, correct declarations, run the compliance check, disposition findings, export reports | Sign off a scan, approve overrides, amend a signed report, issue notices, read the audit log, author rules, administer anything, **delete anything** |
-| **admin** (team reviewer) | Reviews **its own team's** work | **Sign off scans** (accept / reject / send back), read its team's casework, dispose findings, approve second-level overrides, finalize and amend reports, issue notices, order re-inspections, see its team's people and statistics, read the audit log | See or act on **another team's** cases, create scans, capture evidence, edit declarations, manage teams or people, **delete anything** |
+| **admin** (team reviewer) | Reviews **its own team's** work | **Sign off scans** (accept / reject / send back), **refer a case up** to a super administrator, read its team's casework, dispose findings, approve second-level overrides, finalize and amend reports, issue notices, order re-inspections, see its team's auditors and statistics, read the audit log | See or act on **another team's** cases, create scans, capture evidence, edit declarations, manage teams or people, **delete anything** |
 | **super_admin** | Runs the organization | Everything an admin can, across **every** team, plus teams, people, rules, configuration, retention and deletion. Its decision on a case is **final** | **Perform the auditing itself** — `inspection.create`, `evidence.upload`, `processing.run`, `declaration.edit` and `evaluation.run` are deliberately withheld |
 
 Three deliberate consequences:
@@ -77,9 +77,12 @@ Three deliberate consequences:
   admin with no team matches **nothing** — a permission boundary that falls back to "everything"
   when its input is missing is not a boundary. Migration 007 places every pre-existing admin in a
   team so this can never strand anyone.
-- **Decisions run one way.** Once a super administrator decides a case, an admin cannot overturn,
-  replace or re-open it. The check reads the `reviewer_role` stored *on the decision*, not the
-  reviewer's role today, so demoting someone never retroactively unlocks what they finalised.
+- **Decisions run one way.** Once a super administrator *settles* a case — accepts or rejects it —
+  an admin cannot overturn, replace or re-open it. The check reads the `reviewer_role` stored *on
+  the decision*, not the reviewer's role today, so demoting someone never retroactively unlocks
+  what they finalised. **Sending a package back is the exception**: that is an instruction to go
+  and re-photograph it, so the work continues and both the auditor and the admin can act on it.
+  Locking a send-back would strand the case with nobody able to move it.
 
 Two deliberate consequences:
 
@@ -146,6 +149,11 @@ Verdict                      Compliance ready · Not compliance ready · Needs r
         │                    ├─ Could not be determined  where the images do not settle it
         │                    └─ Requirements met         what the package got right
         ▼
+Send to admin                an explicit act: analysis finishing means the machine is done,
+        │                    not the auditor. Until they send it the scan reaches no review
+        │                    queue. Sent back? it returns to their home screen with the
+        │                    reviewer's reason and a button to photograph the package again
+        ▼
 Scan report                  PDF / JSON — image SHA-256s, the statutory text hash, the model
         │                    version, and the OCR text the verdict was formed from
         ▼
@@ -155,6 +163,13 @@ History                      every scan the officer has run, filterable by outco
 The verdict gives a **status and counts, not a score** (requirement EXT-07): one missing mandatory
 declaration makes a package non-compliant however many other rules pass, so a percentage would
 misrepresent the legal position.
+
+**The package names itself.** The common or generic name is a declaration the Rules require, so a
+judge that has read the label already knows it — `productName` and `brand` come back with the verdict
+and name the record, because a scan listed as "Unnamed product" is one an officer cannot find again.
+A name the auditor typed always wins; failing both, the extracted product-name declaration is used.
+With no AI model configured and no such declaration, the scan honestly stays unnamed rather than
+being given a guess.
 
 **Two assessments, kept separate.** Alongside the AI verdict, the deterministic versioned rule engine
 runs over the same evidence and its findings are shown as a labeled cross-check. They are never merged:
@@ -196,10 +211,15 @@ A team is the unit an admin reviews and an auditor works in. An organization is 
 is a group of auditors with one or more admins over them, and `team_id` on a scan is what routes it
 to the right queue — stamped from the capturing auditor at creation, never inferred later.
 
+**A team has exactly one admin.** "The admin of this team" is therefore always an unambiguous
+person, and an auditor always knows who reviews their work. Assigning a second one is refused;
+migration 008 resolved any team the earlier backfill left with several by keeping the
+earliest-created admin and unassigning the rest.
+
 Only `super_admin` creates teams or moves people between them, because moving someone changes whose
 queue their work reaches. Every move is audited. A team cannot be archived while it still has
-members, and a team with **no active admin** is surfaced as a case needing attention — its work
-would otherwise reach nobody.
+members, and a team with no admin is flagged in the Teams list — its work would otherwise reach
+nobody.
 
 > Assigning a **custom subset of compliance rules per team** is designed for but not implemented:
 > today every team is assessed against the same published rule set. The schema and console leave
@@ -219,13 +239,18 @@ Open a scan                  the reviewer sees EXACTLY what the officer saw — 
         │                    same grouped checks, same evidence viewer with OCR boxes drawn
         │                    on the officer's own photographs
         ▼
-Decision                     Accept · Reject · Send back for re-capture
-        │                    a reason is mandatory on all three, acceptance included
+Decision                     Accept · Reject · Send back · Refer to super administrator
+        │                    a reason is mandatory on all four, acceptance included
         │                    written to the append-only, hash-chained audit log
         ▼
 Signed off                   every decision kept, newest first — the path to the outcome
                              survives, not just the outcome
 ```
+
+**Referring a case upward** is the fourth option, for a case an admin judges beyond their authority
+to settle. It leaves their queue, lands in the super administrator's, and locks: the admin who
+raised it cannot then decide it anyway, or the referral would mean nothing. Only a super
+administrator's answer clears it — and that answer is final.
 
 Three properties make the sign-off worth trusting:
 
@@ -237,8 +262,11 @@ Three properties make the sign-off worth trusting:
   judge call failed, refuses acceptance — sending it back for re-capture stays available, because that is
   the correct response to a failed analysis.
 
-Alongside the queue an admin gets **Signed off** and **My team** — the auditors reporting to them and
-their team's throughput, read-only, because membership is the super administrator's authority.
+Alongside the queue an admin gets **Signed off** and **My team**: the auditors reporting to them,
+read-only, because membership is the super administrator's authority. It does not list the admin —
+a team has one, you are signed in as them, and a panel telling you who you are is noise. Opening an
+auditor shows what they have completed **today, this week and this month** (calendar periods, so
+"this week" means the week you are standing in) alongside their all-time figures.
 
 The console deliberately carries **none** of the capture surface — no new inspection, no upload, no camera,
 no calibration, no declaration editing, no processing-job telemetry. Every one of those needs a permission
@@ -251,23 +279,23 @@ A super administrator does not open a queue — the queues belong to the admins.
 
 | Section | What it answers |
 |---|---|
-| **Overview** | Throughput, decisions and headcount across every team, with casework-per-month |
-| **Needs attention** | The cases no admin queue resolves on its own (see below) |
+| **Overview** | Organization-wide throughput, casework-per-month, headcount, and what is waiting on you |
+| **Referred to you** | Cases an admin has handed upward, with who raised each and why |
 | **All scans** | The complete list, including work still being captured — reachable, never the landing page |
-| **Teams** | Create, rename, archive; assign admins and auditors; per-team statistics |
+| **Teams** | Create, rename, archive; assign the admin and the auditors; per-team statistics |
 | **Admins** | Every admin, their team, their team size, and decisions taken — with add / activate / suspend / delete |
 | **Auditors** | Every auditor, their team, and cases captured — same lifecycle controls |
 | **Rule library · Deleted records · Audit trail** | Unchanged governance surfaces |
 
-**Needs attention** is three named situations rather than an invented urgency score, because each one
-means something different and is fixed differently:
+**Referred to you** is the only thing that reaches the super administrator's attention list, and the
+only way in is an admin explicitly putting it there. Nothing arrives because the system inferred it
+was interesting, so the list is a queue of asks from named people — each with the reason they gave —
+rather than a pile to triage.
 
-- **Decision superseded** — the package was re-analysed after it was decided, so the standing decision
-  was taken against a reading that is no longer current.
-- **No admin to review it** — the owning team has no active admin, so the case will never surface in
-  anyone's queue. Assign an admin, or move the case.
-- **Waiting too long** — analysed and still undecided after seven days. Structurally fine, simply not
-  being picked up.
+The overview carries no organization-wide "awaiting review" figure on purpose: undecided work is an
+admin's queue, not the super administrator's. The number that belongs to them is what has actually
+been referred up. Per-team, per-admin and per-auditor performance lives in the Organization sections
+rather than being repeated on the landing page.
 
 An admin's numbers are **decisions taken**; an auditor's are **cases captured**. They are shown on
 separate screens because they are different units of work, and one grid would invite comparing numbers
@@ -293,9 +321,11 @@ analysis as the auditor and the decision is flagged stale on your next visit. Si
 **admin.ka@demo.gov.example** and the queue is a completely different set of cases: that is team scoping.
 
 **As a super administrator.** Sign in as **superadmin@demo.gov.example** and you get the organization
-instead of a queue: throughput across both teams, admin and auditor performance, and **Teams** /
-**Admins** / **Auditors** to run them. Try deciding a case there, then reopening it as
-`admin@` — the form is closed, because a super administrator's decision is final.
+instead of a queue: throughput across both teams, and **Teams** / **Admins** / **Auditors** to run
+them. Two things worth trying: decide a case here, then reopen it as `admin@` — the form is closed,
+because a super administrator's decision is final. And as `admin@`, choose **Refer to super
+administrator** on a case; it leaves the admin queue, appears under **Referred to you** with the
+reason given, and the admin can no longer decide it.
 
 Scans from *self-registered* auditors will not appear in any of it: signup puts each new account in its
 **own** organization (so one auditor can never read another's scans). Create auditors from the
@@ -366,9 +396,10 @@ npm run ocr         # just the PaddleOCR sidecar
 cd server
 npm run dev         # API with reload
 npm run seed        # seed database (no-op if already seeded); delete server/data to reset
-npm test            # 108 tests: engine units (incl. the critical calibration pair), API/workflow/UAT,
-                    # the scan flow, reviewer sign-off, team isolation and decision
-                    # precedence, and the Gemini and PaddleOCR adapters with the network stubbed
+npm test            # 113 tests: engine units (incl. the critical calibration pair), API/workflow/UAT,
+                    # the scan flow, submission, reviewer sign-off, escalation, team
+                    # isolation and decision precedence, and the Gemini and PaddleOCR
+                    # adapters with the network stubbed
 node ../scripts/extract-rules.mjs   # (re)extract the statutory corpus into assets/rules/
 npm run typecheck
 
@@ -404,5 +435,8 @@ npm run dev / build
 - A reviewer's sign-off is a record, not a click: mandatory reason, written to the audit chain, pinned to the
   verdict it judged, refused to whoever captured the scan, and marked stale if that verdict is superseded.
 - The role hierarchy is data, not decoration: an admin's scope predicate is its team and fails closed without
-  one, a super administrator is refused the capture verbs outright, and a super administrator's decision on a
-  case cannot be overturned at admin level.
+  one, a super administrator is refused the capture verbs outright, and a super administrator's decision to
+  accept or reject a case cannot be overturned at admin level.
+- A scan reaches a reviewer only when its auditor sends it. Analysis finishing is the machine being done, not
+  the person — and a package sent back for re-photographing returns to the auditor who captured it, with the
+  reviewer's reason attached and the way to act on it.

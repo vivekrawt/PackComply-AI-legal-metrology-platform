@@ -123,6 +123,12 @@ export interface ComplianceVerdict extends ProviderMeta {
   summary: string;
   confidence: number;
   checks: ComplianceCheck[];
+  // What the package says it is. The common or generic name is a declaration the
+  // Rules require on every package, so a judge that has read the label already
+  // knows it — and a scan listed as "Unnamed product" is one an officer cannot
+  // find again. Never overwrites a name the auditor typed themselves.
+  productName?: string | null;
+  brand?: string | null;
   raw?: unknown;
 }
 

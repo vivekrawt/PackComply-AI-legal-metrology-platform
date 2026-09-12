@@ -29,6 +29,7 @@ const SCAN_STATS = `
   COALESCE(SUM(sr.decision = 'accepted'), 0) AS accepted,
   COALESCE(SUM(sr.decision = 'rejected'), 0) AS rejected,
   COALESCE(SUM(sr.decision = 'recapture_requested'), 0) AS sent_back,
+  COALESCE(SUM(sr.decision = 'escalated'), 0) AS escalated,
   COALESCE(SUM(cv.overall = 'compliant'), 0) AS compliant,
   COALESCE(SUM(cv.overall = 'non_compliant'), 0) AS non_compliant,
   COALESCE(SUM(cv.overall = 'needs_review'), 0) AS needs_review,
@@ -44,6 +45,7 @@ function statsRowToDto(r: any) {
     accepted: r?.accepted ?? 0,
     rejected: r?.rejected ?? 0,
     sentBack: r?.sent_back ?? 0,
+    escalated: r?.escalated ?? 0,
     compliant: r?.compliant ?? 0,
     nonCompliant: r?.non_compliant ?? 0,
     needsReview: r?.needs_review ?? 0,
@@ -96,59 +98,38 @@ export function orgOverview(db: DB, orgId: string) {
   };
 }
 
-// ---- Cases that need super-administrator attention --------------------------
-// Three concrete situations, each named rather than scored. These are the cases no
-// admin queue resolves on its own, which is exactly what makes them the super
-// administrator's business rather than a team's.
-const AWAITING_DAYS = 7;
-
+// ---- Cases referred up to the super administrator ---------------------------
+// Exactly one thing lands here: a case an admin has explicitly referred upward
+// because they judged it beyond their authority to settle. Nothing arrives by an
+// inferred urgency rule, so this list is a queue of asks from named people rather
+// than a pile the system decided was interesting.
 export function attentionCases(db: DB, orgId: string) {
-  const cutoff = new Date(Date.now() - AWAITING_DAYS * 86_400_000).toISOString();
   const rows = db.prepare(
     `SELECT i.id, i.created_at, i.team_id, t.name AS team_name,
             p.brand, p.generic_name, ou.name AS officer_name,
-            cv.id AS verdict_id, cv.overall AS verdict,
-            sr.id AS review_id, sr.decision, sr.verdict_id AS review_verdict_id,
-            (SELECT COUNT(*) FROM users au WHERE au.team_id = i.team_id
-               AND au.role = 'admin' AND au.status = 'active') AS active_admins
+            cv.overall AS verdict,
+            sr.reason AS escalation_reason, sr.created_at AS escalated_at,
+            ru.name AS escalated_by
        ${SCAN_JOINS}
        LEFT JOIN teams t ON t.id = i.team_id
        LEFT JOIN products p ON p.inspection_id = i.id
        LEFT JOIN users ou ON ou.id = i.created_by
-      WHERE i.org_id = ? AND i.deleted_at IS NULL AND cv.id IS NOT NULL
-      ORDER BY i.created_at ASC`,
+       LEFT JOIN users ru ON ru.id = sr.reviewer_id
+      WHERE i.org_id = ? AND i.deleted_at IS NULL AND sr.decision = 'escalated'
+      ORDER BY sr.created_at ASC`,
   ).all(orgId) as any[];
 
-  const out: any[] = [];
-  for (const r of rows) {
-    let reason: string | null = null;
-    let detail = '';
-    if (r.review_id && r.review_verdict_id && r.review_verdict_id !== r.verdict_id) {
-      reason = 'stale_decision';
-      detail = 'The package was re-analysed after it was decided, so the standing decision no longer applies.';
-    } else if (r.active_admins === 0) {
-      reason = 'no_active_admin';
-      detail = r.team_id
-        ? `Team "${r.team_name ?? r.team_id}" has no active admin, so nothing will review this.`
-        : 'This scan belongs to no team, so it reaches no admin queue.';
-    } else if (!r.review_id && r.created_at < cutoff) {
-      reason = 'awaiting_too_long';
-      detail = `Analysed and still undecided after ${AWAITING_DAYS} days.`;
-    }
-    if (!reason) continue;
-    out.push({
-      scanId: r.id,
-      reason,
-      detail,
-      createdAt: r.created_at,
-      teamId: r.team_id, teamName: r.team_name ?? null,
-      officerName: r.officer_name ?? null,
-      product: r.brand || r.generic_name || null,
-      verdict: r.verdict,
-      decision: r.decision ?? null,
-    });
-  }
-  return out;
+  return rows.map((r) => ({
+    scanId: r.id,
+    createdAt: r.created_at,
+    teamId: r.team_id, teamName: r.team_name ?? null,
+    officerName: r.officer_name ?? null,
+    product: r.brand || r.generic_name || null,
+    verdict: r.verdict ?? null,
+    escalatedBy: r.escalated_by ?? null,
+    escalatedAt: r.escalated_at,
+    escalationReason: r.escalation_reason,
+  }));
 }
 
 // ---- Teams ------------------------------------------------------------------
@@ -223,6 +204,60 @@ export function auditorPerformance(db: DB, orgId: string) {
   }));
 }
 
+// Calendar boundaries, not rolling windows: "this week" has to mean the week the
+// reader is standing in, or a Monday morning would show a full week of someone
+// else's work. Computed in UTC to match how every timestamp is stored.
+function periodBounds() {
+  const now = new Date();
+  const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const mondayOffset = (day.getUTCDay() + 6) % 7; // Monday = 0
+  return {
+    today: day.toISOString(),
+    week: new Date(day.getTime() - mondayOffset * 86_400_000).toISOString(),
+    month: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString(),
+  };
+}
+
+// What one auditor got through in a period. "Completed" is when the analysis
+// finished, not when the case was opened — a scan captured last week and analysed
+// today is today's work.
+function auditorPeriod(db: DB, orgId: string, userId: string, since: string) {
+  const captured = (db.prepare(
+    `SELECT COUNT(*) AS c FROM inspections
+      WHERE org_id = ? AND created_by = ? AND deleted_at IS NULL AND created_at >= ?`,
+  ).get(orgId, userId, since) as any).c as number;
+
+  const completed = (db.prepare(
+    `SELECT COUNT(*) AS c FROM inspections i
+      JOIN compliance_verdicts cv ON cv.id = (
+        SELECT v2.id FROM compliance_verdicts v2 WHERE v2.inspection_id = i.id
+         ORDER BY v2.created_at DESC, v2.rowid DESC LIMIT 1)
+     WHERE i.org_id = ? AND i.created_by = ? AND i.deleted_at IS NULL AND cv.created_at >= ?`,
+  ).get(orgId, userId, since) as any).c as number;
+
+  const d = db.prepare(
+    `SELECT COALESCE(SUM(sr.decision = 'accepted'), 0) AS accepted,
+            COALESCE(SUM(sr.decision = 'rejected'), 0) AS rejected,
+            COALESCE(SUM(sr.decision = 'recapture_requested'), 0) AS sent_back
+       FROM scan_reviews sr JOIN inspections i ON i.id = sr.inspection_id
+      WHERE i.org_id = ? AND i.created_by = ? AND i.deleted_at IS NULL AND sr.created_at >= ?`,
+  ).get(orgId, userId, since) as any;
+
+  return {
+    captured, completed,
+    accepted: d?.accepted ?? 0, rejected: d?.rejected ?? 0, sentBack: d?.sent_back ?? 0,
+  };
+}
+
+export function auditorPeriods(db: DB, orgId: string, userId: string) {
+  const b = periodBounds();
+  return {
+    today: auditorPeriod(db, orgId, userId, b.today),
+    week: auditorPeriod(db, orgId, userId, b.week),
+    month: auditorPeriod(db, orgId, userId, b.month),
+  };
+}
+
 export function auditorDetail(db: DB, orgId: string, userId: string) {
   const u = db.prepare(
     `SELECT u.id, u.name, u.email, u.status, u.role, u.team_id, t.name AS team_name,
@@ -254,6 +289,7 @@ export function auditorDetail(db: DB, orgId: string, userId: string) {
       createdAt: u.created_at,
     },
     stats,
+    periods: auditorPeriods(db, orgId, userId),
     recent: recent.map((r) => ({
       scanId: r.id, createdAt: r.created_at,
       product: r.brand || r.generic_name || null,

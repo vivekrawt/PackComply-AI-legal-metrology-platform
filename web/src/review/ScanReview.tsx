@@ -17,7 +17,10 @@ import { CheckGroup, EngineCrossCheck } from '../scan/ChecksView';
 // summary of it. The right column is the part the officer never sees: the decision,
 // its mandatory reason, and the history of every decision taken before it.
 
-const DECISIONS: ReviewDecision[] = ['accepted', 'rejected', 'recapture_requested'];
+// An admin can refer a case upward instead of settling it. A super administrator
+// cannot — there is nobody above them, so the option would go nowhere.
+const ADMIN_DECISIONS: ReviewDecision[] = ['accepted', 'rejected', 'recapture_requested', 'escalated'];
+const SUPER_DECISIONS: ReviewDecision[] = ['accepted', 'rejected', 'recapture_requested'];
 
 export function ScanReview() {
   const { id } = useParams();
@@ -198,6 +201,10 @@ function SignOff({ scan, onDone, canReview, isSuper }: {
   // refuses an admin's attempt to replace it, so the form is closed here rather
   // than offering a control that would be rejected.
   const lockedBySuper = !!current?.final && !isSuper;
+  // Referred upward: the admin who raised it has handed the case over and cannot
+  // decide it further until a super administrator answers.
+  const referredUp = !!current?.awaitingSuperAdmin && !isSuper;
+  const decisions = isSuper ? SUPER_DECISIONS : ADMIN_DECISIONS;
   // Re-deciding is legitimate — a package re-analysed after a send-back needs a
   // fresh decision — so the form stays available with the standing decision shown
   // above it rather than being locked away behind an edit button.
@@ -211,7 +218,7 @@ function SignOff({ scan, onDone, canReview, isSuper }: {
     } catch (err) { setError(err); } finally { setBusy(false); }
   };
 
-  if (!canReview || lockedBySuper) {
+  if (!canReview || lockedBySuper || referredUp) {
     return (
       <section className="rv-panel">
         <h2>Reviewer decision</h2>
@@ -220,6 +227,12 @@ function SignOff({ scan, onDone, canReview, isSuper }: {
           <p className="warn-box">
             This case was decided by a super administrator. That decision is final and cannot be
             changed at admin level — raise it with them if you believe it should be revisited.
+          </p>
+        )}
+        {referredUp && (
+          <p className="warn-box">
+            You referred this case to a super administrator. It is waiting on their decision and
+            cannot be decided here until they have answered it.
           </p>
         )}
         {prior.length > 0 && (
@@ -249,8 +262,15 @@ function SignOff({ scan, onDone, canReview, isSuper }: {
 
       {current && <CurrentDecision review={current} />}
 
+      {isSuper && current?.awaitingSuperAdmin && (
+        <p className="warn-box">
+          <b>{current.reviewerName ?? 'An admin'} referred this case to you.</b> Their reason is
+          above — your decision clears it, and cannot be changed at admin level afterwards.
+        </p>
+      )}
+
       <div className="rv-decisions" role="group" aria-label="Decision">
-        {DECISIONS.map((d) => {
+        {decisions.map((d) => {
           const m = REVIEW_META[d];
           const blocked = noAssessment && d === 'accepted';
           return (

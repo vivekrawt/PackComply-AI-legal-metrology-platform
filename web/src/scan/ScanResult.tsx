@@ -194,6 +194,8 @@ export function ScanResult() {
 
       {scan.engineFindings.length > 0 && <EngineCrossCheck findings={scan.engineFindings} />}
 
+      <ApprovalPanel scan={scan} onChanged={() => setAttempt((n) => n + 1)} />
+
       <div className="verdict-actions">
         {/* The report is built on demand from the stored verdict and evidence, so
             the link is always live — there is no separate "generate" step to get
@@ -221,6 +223,97 @@ export function ScanResult() {
         />
       )}
     </div>
+  );
+}
+
+// What the admin did with this scan, and what the auditor can do next.
+//
+// Analysis finishing does not mean the auditor is finished: they may want another
+// face of the package first. So handing it over is an explicit act, and until they
+// do, the scan reaches no review queue. When it comes back — sent back for
+// re-photographing — this is where that instruction is delivered, with the way to
+// act on it attached rather than merely described.
+function ApprovalPanel({ scan, onChanged }: { scan: Scan; onChanged: () => void }) {
+  const nav = useNavigate();
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<unknown>(null);
+
+  // A decision taken against an earlier analysis no longer describes this scan.
+  const review = scan.review && !scan.review.stale ? scan.review : null;
+  const submitted = !!scan.submittedAt;
+  const sentBack = review?.decision === 'recapture_requested';
+  const decided = review?.decision === 'accepted' || review?.decision === 'rejected';
+
+  const send = async () => {
+    setBusy(true); setError(null);
+    try { await api.post(`/scans/${scan.scanId}/submit`); onChanged(); }
+    catch (e) { setError(e); } finally { setBusy(false); }
+  };
+
+  const status = !submitted ? { tone: 'neutral', icon: '·', label: 'Not sent yet' }
+    : sentBack ? { tone: 'needs_review', icon: '↺', label: 'Sent back to you' }
+      : review?.decision === 'accepted' ? { tone: 'passed', icon: '✓', label: 'Approved' }
+        : review?.decision === 'rejected' ? { tone: 'failed', icon: '✕', label: 'Rejected' }
+          : review?.decision === 'escalated'
+            ? { tone: 'not_assessable', icon: '↑', label: 'With the super administrator' }
+            : { tone: 'needs_review', icon: '…', label: 'Awaiting your admin' };
+
+  return (
+    <section className="field-panel approval">
+      <div className="field-panel-head">
+        <h2>Admin approval</h2>
+        <span className={`chip ${status.tone}`}>
+          <span className="ico" aria-hidden="true">{status.icon}</span>{status.label}
+        </span>
+      </div>
+
+      {review && (
+        <div className={`approval-note ${review.decision}`}>
+          <b>{review.reviewerName ?? 'Your admin'} said:</b>
+          <p>{review.reason}</p>
+          <small>{new Date(review.createdAt).toLocaleString()}</small>
+        </div>
+      )}
+
+      {!submitted && (
+        <p className="muted approval-hint">
+          Your admin does not see this scan until you send it. Add another face of the package
+          first if anything above reads &ldquo;could not be determined&rdquo;.
+        </p>
+      )}
+      {submitted && !review && (
+        <p className="muted approval-hint">
+          Sent for review. Your admin decides it from here — the outcome appears on this screen
+          and on your home page.
+        </p>
+      )}
+      {sentBack && (
+        <p className="muted approval-hint">
+          Photograph the package again — the faces that could not be read are the ones to
+          retake — then send it back for review.
+        </p>
+      )}
+      {decided && (
+        <p className="muted approval-hint">
+          This scan has been decided. Scanning the package again starts a fresh case.
+        </p>
+      )}
+
+      <ErrorText error={error} />
+
+      {(!submitted || sentBack) && (
+        <div className="approval-actions">
+          {sentBack && (
+            <button className="secondary" onClick={() => nav(`/app/scan/new?scan=${scan.scanId}`)}>
+              ＋ Photograph it again
+            </button>
+          )}
+          <button className="primary" onClick={send} disabled={busy}>
+            {busy ? 'Sending…' : sentBack ? 'Send to admin again' : 'Send to admin for approval'}
+          </button>
+        </div>
+      )}
+    </section>
   );
 }
 

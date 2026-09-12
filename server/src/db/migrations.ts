@@ -498,4 +498,87 @@ CREATE INDEX idx_users_team ON users(team_id, role);
 CREATE INDEX idx_insp_team ON inspections(team_id, status);
 `,
   },
+  {
+    // One admin per team.
+    //
+    // A team has a single reviewer, so "the admin of this team" is always an
+    // unambiguous person. Migration 007 could place several admins in the same
+    // backfilled team, so any such team keeps its earliest-created admin and the
+    // rest are unassigned — deliberately visible rather than silently resolved: an
+    // admin with no team has no queue, and a super administrator must place them.
+    //
+    // The `escalated` decision needs no schema: scan_reviews.decision is free text
+    // and the API validates the value.
+    id: '008_one_admin_per_team',
+    sql: `
+UPDATE users SET team_id = NULL
+ WHERE role = 'admin'
+   AND team_id IS NOT NULL
+   AND id <> (
+     SELECT u2.id FROM users u2
+      WHERE u2.team_id = users.team_id AND u2.role = 'admin'
+      ORDER BY u2.created_at, u2.id LIMIT 1
+   );
+`,
+  },
+  {
+    // Submitting a scan for review is now an explicit act by the auditor, rather
+    // than something that happens to them the moment analysis finishes. A scan the
+    // auditor is still working on — re-photographing a face, say — is theirs until
+    // they hand it over.
+    //
+    // Everything already analysed is backfilled as submitted, dated from its first
+    // verdict: making submission explicit must not silently empty the queue of a
+    // database where auditors never had the chance to press the button.
+    id: '009_scan_submission',
+    sql: `
+ALTER TABLE inspections ADD COLUMN submitted_at TEXT;
+ALTER TABLE inspections ADD COLUMN submitted_by TEXT REFERENCES users(id);
+
+UPDATE inspections
+   SET submitted_at = (SELECT v.created_at FROM compliance_verdicts v
+                        WHERE v.inspection_id = inspections.id
+                        ORDER BY v.created_at ASC LIMIT 1),
+       submitted_by = created_by
+ WHERE submitted_at IS NULL
+   AND EXISTS (SELECT 1 FROM compliance_verdicts v WHERE v.inspection_id = inspections.id);
+
+CREATE INDEX idx_insp_submitted ON inspections(submitted_at);
+`,
+  },
+  {
+    // Name the packages that were scanned before the judge was asked to identify
+    // them. A scan listed as "Unnamed product" is one an officer cannot find again,
+    // and the common or generic name was already sitting in the extracted
+    // declarations — it was simply never promoted onto the product record.
+    //
+    // Only fills a product that has neither a name nor a brand, so a name anyone
+    // typed themselves is left exactly as it is.
+    id: '010_backfill_product_names',
+    sql: `
+INSERT INTO products (id, inspection_id, generic_name, package_type, import_status,
+                      presentation_mode, created_at, updated_at)
+SELECT 'prd_bf' || substr(i.id, 6), i.id,
+       (SELECT d.verbatim_text FROM declarations d
+         WHERE d.inspection_id = i.id AND d.decl_type = 'product_name'
+         ORDER BY d.confidence DESC LIMIT 1),
+       'retail', 'domestic', 'printed',
+       strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  FROM inspections i
+ WHERE NOT EXISTS (SELECT 1 FROM products p WHERE p.inspection_id = i.id)
+   AND EXISTS (SELECT 1 FROM declarations d
+                WHERE d.inspection_id = i.id AND d.decl_type = 'product_name');
+
+UPDATE products
+   SET generic_name = (SELECT d.verbatim_text FROM declarations d
+                        WHERE d.inspection_id = products.inspection_id
+                          AND d.decl_type = 'product_name'
+                        ORDER BY d.confidence DESC LIMIT 1)
+ WHERE (generic_name IS NULL OR generic_name = '')
+   AND (brand IS NULL OR brand = '')
+   AND EXISTS (SELECT 1 FROM declarations d
+                WHERE d.inspection_id = products.inspection_id
+                  AND d.decl_type = 'product_name');
+`,
+  },
 ];
