@@ -22,7 +22,8 @@ function actorFor(db: DB, userId: string | null): SessionUser | null {
   if (!u) return null;
   return {
     id: u.id, email: u.email, name: u.name, role: u.role,
-    orgId: u.org_id, state: u.state, district: u.district, office: u.office,
+    orgId: u.org_id, teamId: u.team_id ?? null,
+    state: u.state, district: u.district, office: u.office,
   };
 }
 

@@ -7,13 +7,14 @@ import { SideCamera } from './SideCamera';
 // Capture screen. Three states, in order:
 //
 //   'source'  — upload a file, or use the camera
-//   'capture' — one slot per package side; at least two must carry an image
+//   'capture' — one slot per package side; at least one must carry an image
 //   'sending' — hand off to analysis
 //
 // The four sides are asked for individually because a declaration missing from a
-// face that was never photographed is not a missing declaration. Two images is
-// the floor, not the target: an officer who cannot photograph a side leaves that
-// slot empty and adds a different one instead.
+// face that was never photographed is not a missing declaration. One image is the
+// floor — a small packet may carry its whole label on one face — but it is a floor,
+// not the target: every extra side narrows what the assessment has to call
+// 'unclear', so the screen keeps asking without ever blocking.
 
 type Phase = 'source' | 'capture' | 'sending';
 type Source = 'upload' | 'camera';
@@ -43,7 +44,7 @@ export function ScanCapture() {
   const [error, setError] = React.useState<unknown>(null);
   const fileInputs = React.useRef<Record<string, HTMLInputElement | null>>({});
 
-  const minImages = cap.data?.minImages ?? 2;
+  const minImages = cap.data?.minImages ?? 1;
   const extraSides = cap.data?.extraSides ?? ['front', 'back', 'closeup', 'other'];
 
   // Seed the four side slots once the server has told us which sides it wants.
@@ -162,8 +163,9 @@ export function ScanCapture() {
       <button className="link-back" onClick={() => nav('/app')}>← Back</button>
       <h1>Capture the package</h1>
       <p className="muted">
-        Add a photo for each side you can see. <b>At least {minImages} images are required.</b> If a
-        side is not available, leave it empty and add a different one instead.
+        Add a photo for each side you can see. <b>At least {minImages} image
+        {minImages === 1 ? ' is' : 's are'} required</b>, but every extra side helps: a declaration
+        on a face that was never photographed cannot be assessed.
       </p>
 
       <label className="field">Product or brand name <span className="optional">(optional)</span>
@@ -225,9 +227,13 @@ export function ScanCapture() {
       )}
 
       <div className={`capture-status ${captured >= minImages ? 'ok' : ''}`} role="status">
-        {captured >= minImages
-          ? `${captured} image${captured === 1 ? '' : 's'} captured — ready to analyse.`
-          : `${captured} of ${minImages} required images captured.`}
+        {captured === 0
+          ? `Add at least ${minImages} image to analyse this package.`
+          : captured < minImages
+            ? `${captured} of ${minImages} required images captured.`
+            : captured === 1
+              ? '1 image captured — ready to analyse. Adding more sides gives a fuller assessment.'
+              : `${captured} images captured — ready to analyse.`}
       </div>
 
       <ErrorText error={error} />

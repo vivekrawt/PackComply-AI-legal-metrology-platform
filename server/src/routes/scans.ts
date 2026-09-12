@@ -18,8 +18,11 @@ import { listEvaluations } from '../modules/evaluation/service.js';
 import { getReportByInspection } from '../modules/reports/service.js';
 import { recordAudit } from '../modules/audit/service.js';
 import { assertScannable, latestVerdict } from '../modules/compliance/service.js';
-import { requireScanReport, scanReportPdf } from '../modules/compliance/scanReport.js';
+import { loadScanImages, requireScanReport, scanReportPdf } from '../modules/compliance/scanReport.js';
 import { rulesCorpusStatus } from '../modules/compliance/rulesContext.js';
+import {
+  REVIEW_DECISIONS, latestScanReview, listScanReviews, recordScanReview,
+} from '../modules/compliance/reviewService.js';
 
 const ah = (fn: (req: Request, res: Response, next: NextFunction) => Promise<unknown>) =>
   (req: Request, res: Response, next: NextFunction) => { fn(req, res, next).catch(next); };
@@ -27,10 +30,13 @@ const ah = (fn: (req: Request, res: Response, next: NextFunction) => Promise<unk
 export const scanRouter = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: config.upload.maxBytes } });
 
-// Minimum images before a package can be analysed. One face is never enough to
-// conclude a declaration is absent — the officer would be reporting "missing" on
-// a face they simply did not photograph.
-export const MIN_SCAN_IMAGES = 2;
+// Minimum images before a package can be analysed. One is the floor: an officer
+// holding a small packet whose whole label is on one face should not be blocked
+// from scanning it. It is a floor, not a recommendation — the capture screen
+// still asks for every side, because a declaration missing from a face that was
+// never photographed is not a missing declaration, and the judge is told which
+// faces it did and did not see so it can answer 'unclear' rather than 'missing'.
+export const MIN_SCAN_IMAGES = 1;
 
 // The scan flow's own vocabulary for package faces, in the order the capture
 // screen asks for them. They map onto the evidence store's face labels 1:1.
@@ -249,6 +255,57 @@ scanRouter.get('/scans/:id', requireAuth, requirePerm('inspection.read'), (req, 
       ruleKey: e.ruleKey, version: e.ruleVersion, citation: e.citation, legalStatus: e.ruleLegalStatus,
     })),
     reportId: report?.reportId ?? null,
+    // Who captured this, for the reviewer who has to judge it. A sign-off is a
+    // statement about another officer's work, so that officer is named.
+    officer: db.prepare('SELECT id, name, email FROM users WHERE id = ?').get(insp.createdBy) ?? null,
+    team: db.prepare(
+      'SELECT t.id, t.name FROM teams t JOIN inspections i2 ON i2.team_id = t.id WHERE i2.id = ?',
+    ).get(req.params.id) ?? null,
+    review: latestScanReview(db, req.params.id, verdict?.id ?? null),
+    reviews: listScanReviews(db, req.params.id, verdict?.id ?? null),
+  });
+});
+
+// Per-image OCR boxes, for the evidence viewer on the result screen.
+//
+// The officer taps an image and sees the text the recogniser actually read, drawn
+// where it was read from. That is how a verdict becomes checkable: a declaration
+// reported missing can be confirmed genuinely absent rather than merely unread,
+// and one reported present can be seen on the package. Boxes are normalised
+// fractions of the ORIGINAL photograph (the sidecar maps them back out of its
+// prepared image), so they line up on the picture the officer took.
+scanRouter.get('/scans/:id/ocr', requireAuth, requirePerm('inspection.read'), (req, res) => {
+  const db = getDb();
+  assertInScope(db, req.user!, req.params.id);
+  const images = listInspectionAssets(db, req.params.id).filter((a: any) => a.kind === 'image');
+  const rows = db.prepare(
+    `SELECT asset_id, text, bbox_json, reading_order, script, lang, confidence, provider, model_version, is_mock
+       FROM ocr_blocks WHERE asset_id IN (SELECT id FROM evidence_assets WHERE inspection_id = ?)
+      ORDER BY asset_id, reading_order`,
+  ).all(req.params.id) as any[];
+
+  const byAsset = new Map<string, any[]>();
+  for (const r of rows) {
+    if (!byAsset.has(r.asset_id)) byAsset.set(r.asset_id, []);
+    byAsset.get(r.asset_id)!.push({
+      text: r.text, bbox: JSON.parse(r.bbox_json), readingOrder: r.reading_order,
+      script: r.script, lang: r.lang, confidence: r.confidence,
+    });
+  }
+  res.json({
+    images: images.map((a: any) => ({
+      assetId: a.id,
+      side: a.faceLabel,
+      mime: a.mime,
+      // An image with no blocks is not the same as one that was never read: the
+      // viewer says which, so 'nothing found here' cannot be mistaken for
+      // 'not looked at here'.
+      processed: byAsset.has(a.id),
+      blocks: byAsset.get(a.id) ?? [],
+    })),
+    readBy: rows.length
+      ? { provider: rows[0].provider, modelVersion: rows[0].model_version, isMock: !!rows[0].is_mock }
+      : null,
   });
 });
 
@@ -266,8 +323,24 @@ scanRouter.get('/scans', requireAuth, requirePerm('inspection.read'), (req, res)
               WHERE v.inspection_id = i.id ORDER BY v.created_at DESC, v.rowid DESC LIMIT 1) AS verdict,
             (SELECT v.is_mock FROM compliance_verdicts v
               WHERE v.inspection_id = i.id ORDER BY v.created_at DESC, v.rowid DESC LIMIT 1) AS verdict_is_mock,
+            (SELECT v.id FROM compliance_verdicts v
+              WHERE v.inspection_id = i.id ORDER BY v.created_at DESC, v.rowid DESC LIMIT 1) AS verdict_id,
+            (SELECT sr.decision FROM scan_reviews sr
+              WHERE sr.inspection_id = i.id ORDER BY sr.created_at DESC, sr.rowid DESC LIMIT 1) AS review_decision,
+            (SELECT sr.created_at FROM scan_reviews sr
+              WHERE sr.inspection_id = i.id ORDER BY sr.created_at DESC, sr.rowid DESC LIMIT 1) AS reviewed_at,
+            (SELECT sr.verdict_id FROM scan_reviews sr
+              WHERE sr.inspection_id = i.id ORDER BY sr.created_at DESC, sr.rowid DESC LIMIT 1) AS review_verdict_id,
+            (SELECT ru.name FROM users ru WHERE ru.id = (
+               SELECT sr.reviewer_id FROM scan_reviews sr
+                WHERE sr.inspection_id = i.id ORDER BY sr.created_at DESC, sr.rowid DESC LIMIT 1
+             )) AS reviewer_name,
+            ou.name AS officer_name,
+            i.team_id, tm.name AS team_name,
             (SELECT r.id FROM reports r WHERE r.inspection_id = i.id) AS report_id
      FROM inspections i LEFT JOIN products p ON p.inspection_id = i.id
+     LEFT JOIN users ou ON ou.id = i.created_by
+     LEFT JOIN teams tm ON tm.id = i.team_id
      WHERE ${w.sql} ORDER BY i.created_at DESC LIMIT ?`,
   ).all(...w.params, limit) as any[];
 
@@ -278,6 +351,21 @@ scanRouter.get('/scans', requireAuth, requirePerm('inspection.read'), (req, res)
       imageCount: r.image_count, verdict: r.verdict,
       verdictIsMock: r.verdict_is_mock === null ? null : !!r.verdict_is_mock,
       reportId: r.report_id,
+      officerName: r.officer_name ?? null,
+      teamId: r.team_id ?? null,
+      teamName: r.team_name ?? null,
+      // Null means nobody has signed this off yet — which is what puts it in the
+      // reviewer's queue. `stale` marks a decision taken against an earlier
+      // verdict, i.e. one the package has since been re-analysed past.
+      review: r.review_decision
+        ? {
+            decision: r.review_decision,
+            reviewerName: r.reviewer_name ?? null,
+            createdAt: r.reviewed_at,
+            stale: r.review_verdict_id != null && r.verdict_id != null
+              && r.review_verdict_id !== r.verdict_id,
+          }
+        : null,
     })),
   });
 });
@@ -301,11 +389,33 @@ scanRouter.get('/scans/:id/report', requireAuth, requirePerm('report.read'), (re
   res.json(report);
 });
 
+// ---- Reviewer sign-off ------------------------------------------------------
+// The `admin` role's job, made into a record. A reason is mandatory on every
+// decision including acceptance: "approved, no comment" is not reviewable by
+// anyone who comes after, and this row is what a later challenge is answered with.
+scanRouter.post(
+  '/scans/:id/review',
+  requireAuth, requirePerm('scan.review'),
+  validateBody(z.object({
+    decision: z.enum(REVIEW_DECISIONS),
+    reason: z.string().min(5).max(2000),
+  })),
+  (req, res) => {
+    const db = getDb();
+    assertInScope(db, req.user!, req.params.id);
+    res.status(201).json(
+      recordScanReview(db, req.user!, req.params.id, req.body, req.correlationId),
+    );
+  },
+);
+
 scanRouter.get('/scans/:id/report.pdf', requireAuth, requirePerm('report.export'), ah(async (req, res) => {
   const db = getDb();
   assertInScope(db, req.user!, req.params.id);
   const report = requireScanReport(db, req.params.id, req.user!);
-  const pdf = await scanReportPdf(report);
+  // The package images ride along in the PDF: an assessment of a package that
+  // does not show the package is hard to act on and harder to challenge.
+  const pdf = await scanReportPdf(report, loadScanImages(db, req.params.id));
   recordAudit(db, {
     actorId: req.user!.id, actorLabel: req.user!.email, action: 'scan.report_generated',
     objectType: 'inspection', objectId: req.params.id,

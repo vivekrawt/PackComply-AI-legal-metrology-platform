@@ -50,21 +50,44 @@ Optional: `cp server/.env.example server/.env` and adjust.
 
 ## Roles
 
-Three roles, enforced server-side on every route from a single matrix
-(`server/src/modules/auth/permissions.ts`). The web UI renders navigation and buttons from the
-permission list the server returns with `/auth/me`, so it can never offer an action the API refuses.
+One hierarchy, enforced server-side on every route from a single matrix
+(`server/src/modules/auth/permissions.ts`):
+
+```
+super_admin  →  admin  →  auditor        each level supervises the one below it,
+                                          and only the bottom one does the auditing
+```
+
+The web UI renders navigation and buttons from the permission list the server returns with
+`/auth/me`, so it can never offer an action the API refuses.
 
 | Role | What it is for | Can | Cannot |
 |---|---|---|---|
-| **user** | Does the work — the field officer using the product. Self-registration always produces this role, in its own organization. Signs in to the **scan flow**, not the casework workbench | Create scans/inspections, capture/upload evidence, run processing, correct declarations, run the compliance check, disposition findings, export reports | Approve overrides, amend a signed report, issue notices, read the audit log, author rules, administer users, **delete anything** |
-| **admin** | Reviews the work | Read all casework in the organization, disposition findings, approve second-level overrides, finalize and amend reports, issue notices, order re-inspections, read the audit log | Create inspections, upload evidence, edit declarations, administer users or configuration, **delete anything** |
-| **super_admin** | Full write **and delete** | Everything above, plus rule drafting/approval/publication, user administration, system configuration, and deletion of inspections, evidence, unpublished rule versions and accounts | — (holds every permission by construction) |
+| **user** (auditor / field agent) | Does the work. Self-registration always produces this role, in its own organization. Signs in to the **scan flow**, not a console | Create scans, capture/upload evidence, run processing, correct declarations, run the compliance check, disposition findings, export reports | Sign off a scan, approve overrides, amend a signed report, issue notices, read the audit log, author rules, administer anything, **delete anything** |
+| **admin** (team reviewer) | Reviews **its own team's** work | **Sign off scans** (accept / reject / send back), read its team's casework, dispose findings, approve second-level overrides, finalize and amend reports, issue notices, order re-inspections, see its team's people and statistics, read the audit log | See or act on **another team's** cases, create scans, capture evidence, edit declarations, manage teams or people, **delete anything** |
+| **super_admin** | Runs the organization | Everything an admin can, across **every** team, plus teams, people, rules, configuration, retention and deletion. Its decision on a case is **final** | **Perform the auditing itself** — `inspection.create`, `evidence.upload`, `processing.run`, `declaration.edit` and `evaluation.run` are deliberately withheld |
+
+Three deliberate consequences:
+
+- **The super administrator does not audit.** It holds every permission *except* the capture
+  verbs — the one carve-out in "holds everything by construction". An authority that could
+  manufacture the record it later signs off is not a separation of duties, so the hierarchy is
+  encoded in the matrix rather than merely hidden in the UI.
+- **An admin's reach stops at its team.** `scopeWhere()` narrows an admin to `team_id`, and an
+  admin with no team matches **nothing** — a permission boundary that falls back to "everything"
+  when its input is missing is not a boundary. Migration 007 places every pre-existing admin in a
+  team so this can never strand anyone.
+- **Decisions run one way.** Once a super administrator decides a case, an admin cannot overturn,
+  replace or re-open it. The check reads the `reviewer_role` stored *on the decision*, not the
+  reviewer's role today, so demoting someone never retroactively unlocks what they finalised.
 
 Two deliberate consequences:
 
 - **Segregation of duties.** `admin` cannot create or alter the record it signs off, so "who did the work"
   and "who approved it" are always different people. `user` cannot approve its own high-severity override —
-  the second-level approval must come from an `admin` or `super_admin`.
+  the second-level approval must come from an `admin` or `super_admin`. The scan sign-off enforces the same
+  separation directly: whoever captured a scan is refused the review verb on it, kept as defence in depth
+  now that no role can reach both verbs through the API.
 - **Deletion is soft and attributed.** Every delete demands a reason, is written to the tamper-evident audit
   log, and keeps the row (and its evidence hashes) so a previously issued report still verifies. Deleted
   inspections appear in **Deleted Records** and can be restored. Deleting a *finalized* inspection requires an
@@ -77,20 +100,24 @@ Finalization by `user` is policy-driven: set the `finalization_policy` config it
 
 ## Demo accounts (password: `PackComply#2026`)
 
-| E-mail | Role |
-|---|---|
-| user@demo.gov.example | **user** — field officer (Maharashtra/Pune scope); lands in the scan flow |
-| admin@demo.gov.example | **admin** — reviewer (organization-wide) |
-| superadmin@demo.gov.example | **super_admin** — full write and delete |
-| superadmin2@demo.gov.example | **super_admin** — second approver (rule maker-checker demo) |
-| user.ka@demo.gov.example | **user** in Karnataka (scope-isolation demo) |
+| E-mail | Role | Team |
+|---|---|---|
+| user@demo.gov.example | **auditor** — lands in the scan flow | Pune Field Team |
+| admin@demo.gov.example | **admin** — reviews the Pune team only | Pune Field Team |
+| user.ka@demo.gov.example | **auditor** (Karnataka) | Bengaluru Field Team |
+| admin.ka@demo.gov.example | **admin** — reviews the Bengaluru team only | Bengaluru Field Team |
+| superadmin@demo.gov.example | **super_admin** — runs the organization | — (above the teams) |
+| superadmin2@demo.gov.example | **super_admin** — second approver (rule maker-checker demo) | — |
+
+Two teams rather than one on purpose: sign in as `admin@` and then `admin.ka@` and the queues are
+disjoint, which is the only way to see that team scoping does anything.
 
 ## Field-officer flow (the `user` role)
 
 Signing up lands a field officer in a four-screen application — scan, result, history, report. None of
 the reviewer/administrator surface (rule authoring, audit log, analytics, dispositions, recycle bin) is
-shown, because none of it is authority a field officer holds. `admin` and `super_admin` still sign in to
-the full casework workbench.
+shown, because none of it is authority a field officer holds. `admin` and `super_admin` sign in to the
+**reviewer console** instead (below) — the mirror image, carrying none of the capture surface.
 
 ```
 Sign up                      creates a `user` account in its own organization; role is never
@@ -101,8 +128,9 @@ Scan the product             → Upload the image   ·   Click image using the c
         ▼
 Capture the sides            top · bottom · left · right, each optional individually
         │                    "+ Add another side image" for front/back/close-up/other
-        │                    AT LEAST TWO images required — one face cannot show that a
-        │                    declaration is absent, only that you did not photograph it
+        │                    AT LEAST ONE image required — a small packet can carry its whole
+        │                    label on one face; the judge is told which faces it did and did
+        │                    not see, so an unphotographed face reads "unclear", not "missing"
         │                    exact duplicate bytes are refused at upload by SHA-256
         ▼
 Image preparation            OpenCV/Pillow — EXIF, deskew, crop to text, upscale, CLAHE, sharpen
@@ -135,7 +163,7 @@ officer needs to know which is which.
 
 **A scan report is not a finalized report.** Finalization is a legal act gated on officer review of every
 material finding, and this flow does not waive that gate — the scan report is decision support and says
-so on its face. Formal finalization stays in the reviewer's workbench.
+so on its face. Judging a scan is the reviewer's job, in the console below.
 
 ### Statutory corpus
 
@@ -162,23 +190,116 @@ PROVIDER_COMPLIANCE=gemini            # or rule_engine to force the fallback
 
 `npm test` pins `PROVIDER_COMPLIANCE=rule_engine`, so the suite never makes a live billed call.
 
+## Teams
+
+A team is the unit an admin reviews and an auditor works in. An organization is the tenant; a team
+is a group of auditors with one or more admins over them, and `team_id` on a scan is what routes it
+to the right queue — stamped from the capturing auditor at creation, never inferred later.
+
+Only `super_admin` creates teams or moves people between them, because moving someone changes whose
+queue their work reaches. Every move is audited. A team cannot be archived while it still has
+members, and a team with **no active admin** is surfaced as a case needing attention — its work
+would otherwise reach nobody.
+
+> Assigning a **custom subset of compliance rules per team** is designed for but not implemented:
+> today every team is assessed against the same published rule set. The schema and console leave
+> room for it without rework.
+
+## Reviewer console (the `admin` role)
+
+An `admin` lands in a console built for one job: judging scans its own team captured.
+
+```
+Review queue                 every analysed scan in the organization, newest first
+        │                    default filter is what has NOT been decided — this is a
+        │                    worklist, not a browser; unanalysed scans are held out
+        │                    because there is nothing yet to judge
+        ▼
+Open a scan                  the reviewer sees EXACTLY what the officer saw — same verdict,
+        │                    same grouped checks, same evidence viewer with OCR boxes drawn
+        │                    on the officer's own photographs
+        ▼
+Decision                     Accept · Reject · Send back for re-capture
+        │                    a reason is mandatory on all three, acceptance included
+        │                    written to the append-only, hash-chained audit log
+        ▼
+Signed off                   every decision kept, newest first — the path to the outcome
+                             survives, not just the outcome
+```
+
+Three properties make the sign-off worth trusting:
+
+- **A decision names the reading it was made against.** It pins the verdict id, so re-analysing a package
+  marks the standing decision **stale** rather than silently carrying a reviewer's name forward onto an
+  assessment they never read.
+- **You cannot sign off your own capture.** Enforced server-side, not hidden in the UI.
+- **There is nothing to accept until there is an assessment.** A scan that was never analysed, or whose
+  judge call failed, refuses acceptance — sending it back for re-capture stays available, because that is
+  the correct response to a failed analysis.
+
+Alongside the queue an admin gets **Signed off** and **My team** — the auditors reporting to them and
+their team's throughput, read-only, because membership is the super administrator's authority.
+
+The console deliberately carries **none** of the capture surface — no new inspection, no upload, no camera,
+no calibration, no declaration editing, no processing-job telemetry. Every one of those needs a permission
+the reviewer role does not hold, and offering a control the API will refuse is worse than not offering it.
+
+## Administration console (the `super_admin` role)
+
+A super administrator does not open a queue — the queues belong to the admins. Its landing page is
+**how the organization is doing**:
+
+| Section | What it answers |
+|---|---|
+| **Overview** | Throughput, decisions and headcount across every team, with casework-per-month |
+| **Needs attention** | The cases no admin queue resolves on its own (see below) |
+| **All scans** | The complete list, including work still being captured — reachable, never the landing page |
+| **Teams** | Create, rename, archive; assign admins and auditors; per-team statistics |
+| **Admins** | Every admin, their team, their team size, and decisions taken — with add / activate / suspend / delete |
+| **Auditors** | Every auditor, their team, and cases captured — same lifecycle controls |
+| **Rule library · Deleted records · Audit trail** | Unchanged governance surfaces |
+
+**Needs attention** is three named situations rather than an invented urgency score, because each one
+means something different and is fixed differently:
+
+- **Decision superseded** — the package was re-analysed after it was decided, so the standing decision
+  was taken against a reading that is no longer current.
+- **No admin to review it** — the owning team has no active admin, so the case will never surface in
+  anyone's queue. Assign an admin, or move the case.
+- **Waiting too long** — analysed and still undecided after seven days. Structurally fine, simply not
+  being picked up.
+
+An admin's numbers are **decisions taken**; an auditor's are **cases captured**. They are shown on
+separate screens because they are different units of work, and one grid would invite comparing numbers
+that do not mean the same thing. Every such screen says plainly that the counts describe how much work
+moved, not how well anyone did it.
+
 ## Try it
 
 **As a field officer.** Open the app → the front door is **Create your account**. Either register, or press
 **⚡ One-click test account** (`tester@packcomply.test` / `PackComplyTest#1`) to skip straight to scanning —
 the same signup endpoint, the same `user` role, just a pre-filled form. Then **Scan the product** → choose
-upload or camera → add at least two sides → **Analyse for compliance** → read the verdict → **Download
+upload or camera → add at least one side (more is better) → **Analyse for compliance** → read the verdict,
+tapping any image to see the text found on it → **Download
 report (PDF)** → find it again under **History**. The seeded `server/assets/demo-labels/*.png` are legible
 synthetic labels that work end to end through real OCR.
 
 `user@demo.gov.example` also lands in this flow — it is a `user`.
 
-**As a reviewer / administrator.** Sign in as **admin@demo.gov.example** for the casework workbench:
-declarations, dispositions, overrides, finalization, notices and the audit log, read-only over capture.
-**superadmin@demo.gov.example** adds user administration, the rule library and **Deleted Records**.
-Seeded inspections (one finalized, one open, one e-commerce) are ready immediately. The full casework
-path — new inspection → evidence → calibration → processing → workbench → versioned rules → dispositions
-→ finalize → report export with hash verification → repository search — is unchanged.
+**As an admin.** Sign in as **admin@demo.gov.example** to land in the **review queue** for the Pune
+team. Seeded scans are ready immediately — open one, check a finding against the auditor's photographs
+with **Show this on the image**, then record Accept / Reject / Send back with a reason. Re-run the
+analysis as the auditor and the decision is flagged stale on your next visit. Sign in as
+**admin.ka@demo.gov.example** and the queue is a completely different set of cases: that is team scoping.
+
+**As a super administrator.** Sign in as **superadmin@demo.gov.example** and you get the organization
+instead of a queue: throughput across both teams, admin and auditor performance, and **Teams** /
+**Admins** / **Auditors** to run them. Try deciding a case there, then reopening it as
+`admin@` — the form is closed, because a super administrator's decision is final.
+
+Scans from *self-registered* auditors will not appear in any of it: signup puts each new account in its
+**own** organization (so one auditor can never read another's scans). Create auditors from the
+**Auditors** section, assigned to a team, for their work to reach a queue.
 
 ## Real OCR (self-hosted, free, default)
 
@@ -245,8 +366,9 @@ npm run ocr         # just the PaddleOCR sidecar
 cd server
 npm run dev         # API with reload
 npm run seed        # seed database (no-op if already seeded); delete server/data to reset
-npm test            # 92 tests: engine units (incl. the critical calibration pair), API/workflow/UAT,
-                    # the scan flow, and the Gemini and PaddleOCR adapters with the network stubbed
+npm test            # 108 tests: engine units (incl. the critical calibration pair), API/workflow/UAT,
+                    # the scan flow, reviewer sign-off, team isolation and decision
+                    # precedence, and the Gemini and PaddleOCR adapters with the network stubbed
 node ../scripts/extract-rules.mjs   # (re)extract the statutory corpus into assets/rules/
 npm run typecheck
 
@@ -279,3 +401,8 @@ npm run dev / build
   model version, and whether a model ran at all — a verdict that cannot be reproduced is not evidence.
 - A failed compliance call is stored as a verdict carrying its error, never discarded and never rendered as a
   compliance outcome; the scan flow offers a retry that actually re-queues the judge.
+- A reviewer's sign-off is a record, not a click: mandatory reason, written to the audit chain, pinned to the
+  verdict it judged, refused to whoever captured the scan, and marked stale if that verdict is superseded.
+- The role hierarchy is data, not decoration: an admin's scope predicate is its team and fails closed without
+  one, a super administrator is refused the capture verbs outright, and a super administrator's decision on a
+  case cannot be overturned at admin level.

@@ -57,18 +57,37 @@ export function seed(db: DB) {
   // --- Users (demo accounts: one per role, plus a second super admin so the
   //     maker-checker rule on rule publication can be demonstrated, plus a
   //     different-state user account that proves scope isolation).
-  const mkUser = (email: string, name: string, role: any, state?: string, district?: string) =>
-    createUser(db, { email, name, password: DEMO_PASSWORD, role, orgId, state, district });
-  const userId = mkUser('user@demo.gov.example', 'Asha Kulkarni (Demo User)', 'user', 'Maharashtra', 'Pune');
-  const adminId = mkUser('admin@demo.gov.example', 'Rohan Mehta (Demo Admin / Reviewer)', 'admin', 'Maharashtra');
-  const superAdminId = mkUser('superadmin@demo.gov.example', 'Priya Nair (Demo Super Administrator)', 'super_admin');
-  const superAdmin2Id = mkUser('superadmin2@demo.gov.example', 'Vikram Rao (Demo Super Administrator, second approver)', 'super_admin');
-  mkUser('user.ka@demo.gov.example', 'Demo User (Karnataka)', 'user', 'Karnataka', 'Bengaluru Urban');
+  // --- Teams. Two of them, each with its own admin and auditor, so the hierarchy is
+  //     visible in the demo rather than theoretical: the Pune admin sees only Pune's
+  //     scans, the Bengaluru admin only Bengaluru's, and the super administrator sees
+  //     both. A one-team demo would make team scoping look like it does nothing.
+  const puneTeamId = 'team_pune';
+  const blrTeamId = 'team_blr';
+  const mkTeam = (id: string, name: string, description: string) =>
+    db.prepare(
+      `INSERT INTO teams (id, org_id, name, description, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'active', ?, ?)`,
+    ).run(id, orgId, name, description, t, t);
+  mkTeam(puneTeamId, 'Pune Field Team', 'Packaged commodity inspections across Pune district.');
+  mkTeam(blrTeamId, 'Bengaluru Field Team', 'Packaged commodity inspections across Bengaluru Urban.');
+
+  const mkUser = (
+    email: string, name: string, role: any,
+    teamId: string | null, state?: string, district?: string,
+  ) => createUser(db, { email, name, password: DEMO_PASSWORD, role, orgId, teamId, state, district });
+
+  const userId = mkUser('user@demo.gov.example', 'Asha Kulkarni (Demo Auditor)', 'user', puneTeamId, 'Maharashtra', 'Pune');
+  const adminId = mkUser('admin@demo.gov.example', 'Rohan Mehta (Demo Admin / Pune)', 'admin', puneTeamId, 'Maharashtra');
+  // A super administrator sits above the teams, so it is deliberately team-less.
+  const superAdminId = mkUser('superadmin@demo.gov.example', 'Priya Nair (Demo Super Administrator)', 'super_admin', null);
+  const superAdmin2Id = mkUser('superadmin2@demo.gov.example', 'Vikram Rao (Demo Super Administrator, second approver)', 'super_admin', null);
+  mkUser('user.ka@demo.gov.example', 'Kiran Rao (Demo Auditor / Bengaluru)', 'user', blrTeamId, 'Karnataka', 'Bengaluru Urban');
+  mkUser('admin.ka@demo.gov.example', 'Meera Iyer (Demo Admin / Bengaluru)', 'admin', blrTeamId, 'Karnataka');
 
   const ruleAdminId = superAdminId;
   const ruleAdmin2Id = superAdmin2Id;
-  const inspector: SessionUser = { id: userId, email: 'user@demo.gov.example', name: 'Asha Kulkarni', role: 'user', orgId, state: 'Maharashtra', district: 'Pune', office: null };
-  const reviewer: SessionUser = { id: adminId, email: 'admin@demo.gov.example', name: 'Rohan Mehta', role: 'admin', orgId, state: 'Maharashtra', district: null, office: null };
+  const inspector: SessionUser = { id: userId, email: 'user@demo.gov.example', name: 'Asha Kulkarni', role: 'user', orgId, teamId: puneTeamId, state: 'Maharashtra', district: 'Pune', office: null };
+  const reviewer: SessionUser = { id: adminId, email: 'admin@demo.gov.example', name: 'Rohan Mehta', role: 'admin', orgId, teamId: puneTeamId, state: 'Maharashtra', district: null, office: null };
 
   // --- Model registry (mock components clearly labeled)
   const insModel = db.prepare(
@@ -361,7 +380,7 @@ export async function seedDemoInspections(db: DB) {
   registerPipelineHandlers();
   const u = (email: string): SessionUser => {
     const r = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
-    return { id: r.id, email: r.email, name: r.name, role: r.role, orgId: r.org_id, state: r.state, district: r.district, office: r.office };
+    return { id: r.id, email: r.email, name: r.name, role: r.role, orgId: r.org_id, teamId: r.team_id ?? null, state: r.state, district: r.district, office: r.office };
   };
   const inspector = u('user@demo.gov.example');
   const reviewer = u('admin@demo.gov.example');

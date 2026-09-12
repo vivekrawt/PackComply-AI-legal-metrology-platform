@@ -8,6 +8,7 @@ import { registerComplianceHandlers } from '../src/modules/compliance/jobs.js';
 import { drainJobs } from '../src/modules/processing/queue.js';
 import { sha256Hex } from '../src/core/crypto.js';
 import { loadRulesCorpus } from '../src/modules/compliance/rulesContext.js';
+import { loadScanImages, requireScanReport, scanReportPdf } from '../src/modules/compliance/scanReport.js';
 
 // Field-officer scan flow. The compliance judge is pinned to 'rule_engine' by
 // test/setup.ts, so nothing here makes a live API call; what is exercised is the
@@ -84,7 +85,7 @@ describe('capture rules', () => {
   it('publishes the sides to ask for and the image floor', async () => {
     const res = await officer.get('/api/v1/scans/capability').set(H);
     expect(res.status).toBe(200);
-    expect(res.body.minImages).toBe(2);
+    expect(res.body.minImages).toBe(1);
     expect(res.body.sides).toEqual(['top', 'bottom', 'left', 'right']);
     expect(res.body.extraSides).toContain('other');
     // Whether an AI verdict is actually available is the server's answer, not a
@@ -92,31 +93,27 @@ describe('capture rules', () => {
     expect(res.body.judge.isMock).toBe(true);
   });
 
-  it('refuses analysis below two images, and accepts it at two', async () => {
+  it('refuses analysis with no images, and accepts it at one', async () => {
     const scan = (await officer.post('/api/v1/scans').set(H).send({
       product: { brand: 'Test Bar' },
     })).body.scanId;
 
+    // Nothing photographed is still nothing to assess.
     const none = await officer.post(`/api/v1/scans/${scan}/analyze`).set(H);
     expect(none.status).toBe(422);
-    expect(none.body.error.message).toMatch(/at least 2/i);
+    expect(none.body.error.message).toMatch(/at least 1/i);
 
+    // One face is the floor: a small packet can carry its whole label on one side.
     const first = await officer.post(`/api/v1/scans/${scan}/images`).set(H)
       .attach('file', png('top'), { filename: 'top.png', contentType: 'image/png' })
       .field('side', 'top');
     expect(first.status).toBe(201);
-    expect(first.body.readyToAnalyze).toBe(false);
-
-    const one = await officer.post(`/api/v1/scans/${scan}/analyze`).set(H);
-    expect(one.status).toBe(422);
-
-    const second = await officer.post(`/api/v1/scans/${scan}/images`).set(H)
-      .attach('file', png('bottom'), { filename: 'bottom.png', contentType: 'image/png' })
-      .field('side', 'bottom');
-    expect(second.body.readyToAnalyze).toBe(true);
+    expect(first.body.readyToAnalyze).toBe(true);
+    expect(first.body.minImages).toBe(1);
 
     const go = await officer.post(`/api/v1/scans/${scan}/analyze`).set(H);
     expect(go.status).toBe(202);
+    expect(go.body.imageCount).toBe(1);
   });
 
   it('accepts an extra side when one of the four is unavailable', async () => {
@@ -237,6 +234,74 @@ describe('analysis and verdict', () => {
     expect((getDb().prepare('SELECT COUNT(*) AS c FROM reports WHERE inspection_id = ?').get(scanId) as any).c).toBe(0);
   });
 
+  it('serves the OCR boxes the evidence viewer draws on the images', async () => {
+    const res = await officer.get(`/api/v1/scans/${scanId}/ocr`).set(H);
+    expect(res.status).toBe(200);
+    expect(res.body.images).toHaveLength(2);
+
+    for (const img of res.body.images) {
+      expect(img.assetId).toBeTruthy();
+      // An image the recogniser read is distinguishable from one it never saw:
+      // "found nothing here" and "did not look here" must never render the same.
+      expect(img.processed).toBe(true);
+      for (const b of img.blocks) {
+        expect(typeof b.text).toBe('string');
+        // Fractions of the ORIGINAL photograph, or the boxes land in the wrong
+        // place on the officer's picture.
+        for (const k of ['x', 'y', 'w', 'h'] as const) {
+          expect(b.bbox[k]).toBeGreaterThanOrEqual(0);
+          expect(b.bbox[k]).toBeLessThanOrEqual(1);
+        }
+      }
+    }
+  });
+
+  it('serves an evidence image to a plain <img> tag: cookie only, no custom header', async () => {
+    // The viewer renders images with <img src>, which cannot carry the
+    // X-Requested-With header the mutation routes demand. If that header ever
+    // became mandatory on reads, every image on the result screen would silently
+    // fail to load.
+    const assetId = (getDb().prepare(
+      "SELECT id FROM evidence_assets WHERE inspection_id = ? AND kind = 'image' LIMIT 1",
+    ).get(scanId) as any).id;
+    const res = await officer.get(`/api/v1/assets/${assetId}/content`);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/^image\//);
+  });
+
+  it('will not hand another officer the OCR boxes for this scan', async () => {
+    const other = request(app);
+    const signup = await other.post('/api/v1/auth/signup').set(H).send({
+      email: `nosy-${Date.now()}@packcomply.test`, name: 'Nosy Officer', password: 'PackComply#2026',
+    });
+    const cookie = signup.headers['set-cookie'];
+    const res = await other.get(`/api/v1/scans/${scanId}/ocr`).set(H).set('Cookie', cookie);
+    expect([403, 404]).toContain(res.status);
+  });
+
+  it('puts the package images in the PDF, and stays a PDF when one cannot be embedded', async () => {
+    const images = loadScanImages(getDb(), scanId);
+    expect(images).toHaveLength(2);
+    expect(images.every((i) => i.buf !== null)).toBe(true);
+    expect(images.every((i) => i.sha256.length === 64)).toBe(true);
+
+    const report = requireScanReport(getDb(), scanId, {
+      id: 'usr_test', name: 'Test Officer', email: 'officer@packcomply.test',
+    } as any);
+    const withImages = await scanReportPdf(report, images);
+    const without = await scanReportPdf(report, []);
+    expect(withImages.subarray(0, 5).toString()).toBe('%PDF-');
+    // The plates are the point: a report that shows the package is materially
+    // larger than one that only describes it.
+    expect(withImages.length).toBeGreaterThan(without.length);
+
+    // A face the PDF cannot reproduce (HEIC, say) must not take the document down.
+    const unembeddable = await scanReportPdf(report, [
+      { ...images[0], mime: 'image/heic', buf: null },
+    ]);
+    expect(unembeddable.subarray(0, 5).toString()).toBe('%PDF-');
+  });
+
   it('refuses a report for a scan that was never analysed', async () => {
     const fresh = (await officer.post('/api/v1/scans').set(H).send({})).body.scanId;
     const res = await officer.get(`/api/v1/scans/${fresh}/report`).set(H);
@@ -289,5 +354,199 @@ describe('statutory corpus', () => {
     // Spot-check that the declaration rule the judge relies on is actually present.
     expect(corpus.text).toMatch(/Declarations to be made on every package/i);
     expect(corpus.text).toMatch(/principal display panel/i);
+  });
+});
+
+// The reviewer's side of the segregation of duties: `admin` judges work it did not
+// do, and the judgement is a record rather than a click that leaves no trace.
+describe('reviewer sign-off', () => {
+  const DEMO_PASSWORD = 'PackComply#2026';
+  let reviewer: request.Agent;       // admin@demo.gov.example
+  let demoOfficer: request.Agent;    // user@demo.gov.example, same organization
+  let reviewedScan: string;
+
+  async function signIn(email: string, password = DEMO_PASSWORD) {
+    const agent = request.agent(app);
+    const res = await agent.post('/api/v1/auth/login').set(H).send({ email, password });
+    return { agent, res };
+  }
+
+  async function analysedScan(agent: request.Agent, brand: string) {
+    const scanId = (await agent.post('/api/v1/scans').set(H).send({ product: { brand } })).body.scanId;
+    await agent.post(`/api/v1/scans/${scanId}/images`).set(H)
+      .attach('file', png(`${brand}-top`), { filename: 'top.png', contentType: 'image/png' })
+      .field('side', 'top');
+    await agent.post(`/api/v1/scans/${scanId}/analyze`).set(H);
+    await drainJobs(getDb());
+    return scanId;
+  }
+
+  beforeAll(async () => {
+    reviewer = (await signIn('admin@demo.gov.example')).agent;
+    demoOfficer = (await signIn('user@demo.gov.example')).agent;
+    reviewedScan = await analysedScan(demoOfficer, 'Review Me');
+  });
+
+  it('gives the reviewer the organization’s scans, named with the officer who captured them', async () => {
+    const res = await reviewer.get('/api/v1/scans?limit=200').set(H);
+    expect(res.status).toBe(200);
+    const row = res.body.scans.find((s: any) => s.scanId === reviewedScan);
+    expect(row).toBeTruthy();
+    // A sign-off is a statement about someone else's work, so that someone is named.
+    expect(row.officerName).toMatch(/Asha/);
+    expect(row.review).toBeNull();
+  });
+
+  it('refuses a field officer the review verb entirely', async () => {
+    const res = await demoOfficer.post(`/api/v1/scans/${reviewedScan}/review`).set(H)
+      .send({ decision: 'accepted', reason: 'Looks fine to me.' });
+    expect(res.status).toBe(403);
+
+    const me = await demoOfficer.get('/api/v1/auth/me').set(H);
+    expect(me.body.permissions).not.toContain('scan.review');
+  });
+
+  it('demands a reason on every decision, including acceptance', async () => {
+    const res = await reviewer.post(`/api/v1/scans/${reviewedScan}/review`).set(H)
+      .send({ decision: 'accepted', reason: 'ok' });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a decision that is not one of the three', async () => {
+    const res = await reviewer.post(`/api/v1/scans/${reviewedScan}/review`).set(H)
+      .send({ decision: 'approved_with_love', reason: 'Not a real decision.' });
+    expect(res.status).toBe(400);
+  });
+
+  it('records the decision, pins it to the verdict, and writes it to the audit chain', async () => {
+    const res = await reviewer.post(`/api/v1/scans/${reviewedScan}/review`).set(H)
+      .send({ decision: 'rejected', reason: 'The net quantity finding is not supported by the top face.' });
+    expect(res.status).toBe(201);
+    expect(res.body.decision).toBe('rejected');
+    expect(res.body.stale).toBe(false);
+    expect(res.body.verdictId).toBeTruthy();
+
+    const scan = await reviewer.get(`/api/v1/scans/${reviewedScan}`).set(H);
+    expect(scan.body.review.decision).toBe('rejected');
+    expect(scan.body.review.reviewerName).toMatch(/Rohan/);
+    expect(scan.body.reviews).toHaveLength(1);
+
+    const audit = getDb().prepare(
+      "SELECT * FROM audit_events WHERE action = 'scan.reviewed' AND object_id = ? ORDER BY seq DESC LIMIT 1",
+    ).get(reviewedScan) as any;
+    expect(audit).toBeTruthy();
+    const after = JSON.parse(audit.after_json);
+    expect(after.decision).toBe('rejected');
+    expect(after.reason).toMatch(/net quantity/i);
+  });
+
+  it('keeps every decision, newest first, so the path to the outcome survives', async () => {
+    await reviewer.post(`/api/v1/scans/${reviewedScan}/review`).set(H)
+      .send({ decision: 'accepted', reason: 'Re-read the close-up; the declaration is legible after all.' });
+
+    const scan = await reviewer.get(`/api/v1/scans/${reviewedScan}`).set(H);
+    expect(scan.body.review.decision).toBe('accepted');
+    expect(scan.body.reviews).toHaveLength(2);
+    expect(scan.body.reviews[1].decision).toBe('rejected');
+  });
+
+  it('marks a decision stale once the package is re-analysed past it', async () => {
+    const fresh = await reviewer.get(`/api/v1/scans/${reviewedScan}`).set(H);
+    expect(fresh.body.review.stale).toBe(false);
+
+    // A new verdict means the standing sign-off was taken against a reading that is
+    // no longer current — it must not silently carry forward onto the new one.
+    await demoOfficer.post(`/api/v1/scans/${reviewedScan}/analyze`).set(H).send({ force: true });
+    await drainJobs(getDb());
+
+    const after = await reviewer.get(`/api/v1/scans/${reviewedScan}`).set(H);
+    expect(after.body.review.stale).toBe(true);
+
+    const list = await reviewer.get('/api/v1/scans?limit=200').set(H);
+    expect(list.body.scans.find((s: any) => s.scanId === reviewedScan).review.stale).toBe(true);
+  });
+
+  it('does not let a super administrator perform the auditing work at all', async () => {
+    const { agent: superAdmin } = await signIn('superadmin@demo.gov.example');
+    // The hierarchy is enforced in the permission matrix, not merely hidden in the UI.
+    expect((await superAdmin.post('/api/v1/scans').set(H).send({})).status).toBe(403);
+
+    const me = await superAdmin.get('/api/v1/auth/me').set(H);
+    for (const p of ['inspection.create', 'evidence.upload', 'evaluation.run', 'declaration.edit']) {
+      expect(me.body.permissions).not.toContain(p);
+    }
+    // It keeps every authority that actually is its job.
+    expect(me.body.permissions).toContain('scan.review');
+    expect(me.body.permissions).toContain('team.manage');
+    expect(me.body.permissions).toContain('inspection.delete');
+  });
+
+  it('refuses a sign-off from whoever captured the scan', async () => {
+    // No role can both capture and review through the API any more, so this guard is
+    // asserted directly against the service that enforces it — it is defence in
+    // depth for the day someone widens the matrix again.
+    const { recordScanReview } = await import('../src/modules/compliance/reviewService.js');
+    const r = getDb().prepare('SELECT * FROM users WHERE email = ?')
+      .get('user@demo.gov.example') as any;
+    const capturer = {
+      id: r.id, email: r.email, name: r.name, role: r.role,
+      orgId: r.org_id, teamId: r.team_id, state: r.state, district: r.district, office: r.office,
+    };
+    expect(() => recordScanReview(getDb(), capturer as any, reviewedScan, {
+      decision: 'accepted', reason: 'Signing off my own capture should not be possible.',
+    })).toThrow(/captured this scan/i);
+  });
+
+  it('shows an admin only their own team, and the super administrator everything', async () => {
+    const { agent: blrOfficer } = await signIn('user.ka@demo.gov.example');
+    const blrScan = await analysedScan(blrOfficer, 'Bengaluru Packet');
+
+    // The Pune admin must not see another team's case, in the list or by direct id.
+    const puneList = await reviewer.get('/api/v1/scans?limit=200').set(H);
+    expect(puneList.body.scans.some((s: any) => s.scanId === blrScan)).toBe(false);
+    expect(puneList.body.scans.some((s: any) => s.scanId === reviewedScan)).toBe(true);
+    expect((await reviewer.get(`/api/v1/scans/${blrScan}`).set(H)).status).toBe(403);
+
+    // The Bengaluru admin must.
+    const { agent: blrAdmin } = await signIn('admin.ka@demo.gov.example');
+    const blrList = await blrAdmin.get('/api/v1/scans?limit=200').set(H);
+    expect(blrList.body.scans.some((s: any) => s.scanId === blrScan)).toBe(true);
+    expect(blrList.body.scans.some((s: any) => s.scanId === reviewedScan)).toBe(false);
+
+    // The super administrator sees across every team in the organization.
+    const { agent: sa } = await signIn('superadmin@demo.gov.example');
+    const saList = await sa.get('/api/v1/scans?limit=200').set(H);
+    const ids = saList.body.scans.map((s: any) => s.scanId);
+    expect(ids).toContain(blrScan);
+    expect(ids).toContain(reviewedScan);
+  });
+
+  it('makes a super administrator’s decision final against an admin', async () => {
+    const scanId = await analysedScan(demoOfficer, 'Precedence Case');
+    const { agent: sa } = await signIn('superadmin@demo.gov.example');
+
+    const decided = await sa.post(`/api/v1/scans/${scanId}/review`).set(H)
+      .send({ decision: 'rejected', reason: 'Escalated: the missing declaration is material, the case stands rejected.' });
+    expect(decided.status).toBe(201);
+    expect(decided.body.final).toBe(true);
+    expect(decided.body.reviewerRole).toBe('super_admin');
+
+    // The admin whose team owns the case cannot overturn it.
+    const attempt = await reviewer.post(`/api/v1/scans/${scanId}/review`).set(H)
+      .send({ decision: 'accepted', reason: 'Attempting to overturn the super administrator.' });
+    expect(attempt.status).toBe(403);
+    expect(attempt.body.error.message).toMatch(/final/i);
+
+    // The super administrator may still revisit its own decision.
+    const again = await sa.post(`/api/v1/scans/${scanId}/review`).set(H)
+      .send({ decision: 'accepted', reason: 'Reconsidered after reviewing the close-up face.' });
+    expect(again.status).toBe(201);
+  });
+
+  it('refuses a sign-off on a scan that has never been analysed', async () => {
+    const empty = (await demoOfficer.post('/api/v1/scans').set(H).send({})).body.scanId;
+    const res = await reviewer.post(`/api/v1/scans/${empty}/review`).set(H)
+      .send({ decision: 'accepted', reason: 'There is nothing here to accept.' });
+    expect(res.status).toBe(422);
   });
 });

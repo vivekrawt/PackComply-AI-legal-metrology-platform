@@ -58,8 +58,11 @@ coreRouter.get('/roles', requireAuth, (_req, res) => {
 // ---- User administration (IAM-04) ------------------------------------------
 coreRouter.get('/admin/users', requireAuth, requirePerm('admin.users'), (req, res) => {
   const rows = getDb().prepare(
-    'SELECT id, email, name, role, org_id, state, district, office, status, created_at FROM users ORDER BY created_at',
-  ).all();
+    `SELECT u.id, u.email, u.name, u.role, u.org_id, u.team_id, t.name AS team_name,
+            u.state, u.district, u.office, u.status, u.created_at
+       FROM users u LEFT JOIN teams t ON t.id = u.team_id
+      WHERE u.org_id = ? ORDER BY u.created_at`,
+  ).all(req.user!.orgId);
   res.json({ users: rows });
 });
 
@@ -68,14 +71,23 @@ coreRouter.post(
   requireAuth, requirePerm('admin.users'),
   validateBody(z.object({
     email: z.string().email(), name: z.string().min(1), password: z.string().min(10),
-    role: z.enum(ROLES), state: z.string().optional(), district: z.string().optional(), office: z.string().optional(),
+    role: z.enum(ROLES), teamId: z.string().nullable().optional(),
+    state: z.string().optional(), district: z.string().optional(), office: z.string().optional(),
   })),
   (req, res) => {
     const db = getDb();
-    const id = createUser(db, { ...req.body, orgId: req.user!.orgId });
+    // A super administrator is above the teams; anyone else needs one, or their work
+    // (or their queue) reaches nobody.
+    const teamId = req.body.role === 'super_admin' ? null : (req.body.teamId ?? null);
+    if (teamId) {
+      const team = db.prepare('SELECT id FROM teams WHERE id = ? AND org_id = ?')
+        .get(teamId, req.user!.orgId);
+      if (!team) throw badRequest('That team does not exist in your organization');
+    }
+    const id = createUser(db, { ...req.body, teamId, orgId: req.user!.orgId });
     recordAudit(db, {
       actorId: req.user!.id, actorLabel: req.user!.email, action: 'user.created',
-      objectType: 'user', objectId: id, after: { email: req.body.email, role: req.body.role },
+      objectType: 'user', objectId: id, after: { email: req.body.email, role: req.body.role, teamId },
       correlationId: req.correlationId,
     });
     res.status(201).json({ id });

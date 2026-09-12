@@ -39,23 +39,87 @@ export type Role = 'user' | 'admin' | 'super_admin';
 
 export interface User {
   id: string; email: string; name: string; role: Role;
-  orgId: string; state: string | null; district: string | null; office: string | null;
+  orgId: string; teamId: string | null;
+  state: string | null; district: string | null; office: string | null;
+}
+
+// ---- Organization structure and performance ---------------------------------
+export interface Team {
+  id: string; orgId: string; name: string; description: string | null;
+  status: 'active' | 'archived'; createdAt: string; updatedAt: string;
+  adminCount?: number; auditorCount?: number;
+}
+
+export interface Person {
+  id: string; email: string; name: string; role: Role; status: string;
+}
+
+// Workload and throughput for a person, a team or the whole organization.
+// Counts, never a score: these describe how much work moved, not how well.
+export interface ScanStats {
+  total: number; analysed: number; inProgress: number; awaitingReview: number;
+  accepted: number; rejected: number; sentBack: number;
+  compliant: number; nonCompliant: number; needsReview: number;
+  staleDecisions: number; lastActivityAt: string | null;
+}
+
+export interface DecisionStats {
+  decisions: number; accepted: number; rejected: number; sentBack: number;
+  lastDecisionAt: string | null;
+}
+
+export interface TeamRow {
+  id: string; name: string; description: string | null; status: string;
+  adminCount: number; auditorCount: number; stats: ScanStats;
+}
+
+export interface AuditorRow {
+  id: string; name: string; email: string; status: string;
+  teamId: string | null; teamName: string | null; createdAt: string; stats: ScanStats;
+}
+
+export interface AdminRow {
+  id: string; name: string; email: string; status: string;
+  teamId: string | null; teamName: string | null; teamSize: number;
+  createdAt: string; queueAwaiting: number; decisions: DecisionStats;
+}
+
+export type AttentionReason = 'stale_decision' | 'no_active_admin' | 'awaiting_too_long';
+
+export interface AttentionCase {
+  scanId: string; reason: AttentionReason; detail: string; createdAt: string;
+  teamId: string | null; teamName: string | null; officerName: string | null;
+  product: string | null; verdict: VerdictOverall | null; decision: ReviewDecision | null;
+}
+
+export const ATTENTION_META: Record<AttentionReason, { label: string; tone: string }> = {
+  stale_decision: { label: 'Decision superseded', tone: 'needs_review' },
+  no_active_admin: { label: 'No admin to review it', tone: 'failed' },
+  awaiting_too_long: { label: 'Waiting too long', tone: 'needs_review' },
+};
+
+export interface OrgOverview {
+  scans: ScanStats;
+  people: { admins: number; auditors: number; superAdmins: number; suspended: number };
+  teams: { active: number; archived: number };
+  byMonth: { month: string; total: number; decided: number }[];
+  attention: number;
 }
 
 // Display metadata only. Authority lives in the server's role→permission matrix, which
 // arrives with /auth/me; the UI never decides what a role may do.
 export const ROLE_META: Record<Role, { label: string; short: string; hint: string }> = {
   user: {
-    label: 'User (field officer)', short: 'User',
-    hint: 'Runs inspections: open a case, capture the package, check the product, correct declarations.',
+    label: 'Auditor (field agent)', short: 'Auditor',
+    hint: 'Does the auditing: open a case, capture the package, check the product, correct declarations.',
   },
   admin: {
-    label: 'Admin (reviewer)', short: 'Admin',
-    hint: 'Reviews the work: dispose findings, approve overrides, finalize reports, issue notices, read the audit log.',
+    label: 'Admin (team reviewer)', short: 'Admin',
+    hint: 'Reviews their own team’s work: sign off scans, dispose findings, approve overrides, finalize reports.',
   },
   super_admin: {
     label: 'Super administrator', short: 'Super admin',
-    hint: 'Full write and delete: rule publication, user and configuration administration, record deletion.',
+    hint: 'Runs the system: teams, people, rules, configuration and deletion — everything except the auditing itself.',
   },
 };
 
@@ -83,6 +147,57 @@ export interface ScanImage {
   sizeBytes: number | null; capturedAt: string | null; source: string | null;
 }
 
+// Per-image OCR boxes for the evidence viewer. `processed` distinguishes an image
+// the recogniser read and found nothing on from one it never read - which are very
+// different things to tell an officer.
+export interface ScanOcrBlock {
+  text: string; bbox: { x: number; y: number; w: number; h: number };
+  readingOrder: number; script: string; lang: string; confidence: number;
+}
+export interface ScanOcrImage {
+  assetId: string; side: string | null; mime: string; processed: boolean; blocks: ScanOcrBlock[];
+}
+export interface ScanOcr {
+  images: ScanOcrImage[];
+  readBy: { provider: string; modelVersion: string; isMock: boolean } | null;
+}
+
+// ---- Reviewer sign-off ------------------------------------------------------
+// A decision is recorded against the verdict it was taken on. `stale` means the
+// package has been re-analysed since, so the decision stands against a reading
+// that is no longer the current one — never silently carried forward.
+export type ReviewDecision = 'accepted' | 'rejected' | 'recapture_requested';
+
+export interface ScanReview {
+  id: string; decision: ReviewDecision; reason: string;
+  reviewerId: string; reviewerName: string | null;
+  // The authority the decision was taken under, as it stood at the time.
+  // `final` means a super administrator decided it: no admin can replace it.
+  reviewerRole: Role | null; final: boolean;
+  verdictId: string | null; stale: boolean; createdAt: string;
+}
+
+export interface ScanReviewSummary {
+  decision: ReviewDecision; reviewerName: string | null; createdAt: string; stale: boolean;
+}
+
+export const REVIEW_META: Record<ReviewDecision, {
+  label: string; icon: string; tone: string; verb: string; blurb: string;
+}> = {
+  accepted: {
+    label: 'Accepted', icon: '✓', tone: 'passed', verb: 'Accept',
+    blurb: 'The assessment is sound and the evidence supports it.',
+  },
+  rejected: {
+    label: 'Rejected', icon: '✕', tone: 'failed', verb: 'Reject',
+    blurb: 'The assessment is not supported by the evidence captured.',
+  },
+  recapture_requested: {
+    label: 'Sent back', icon: '↺', tone: 'needs_review', verb: 'Send back',
+    blurb: 'The images cannot settle the question — the officer must re-photograph the package.',
+  },
+};
+
 export interface Scan {
   scanId: string; status: ScanStatus; createdAt: string; eventDate: string;
   product: Record<string, any> | null; location: string | null; minImages: number;
@@ -92,12 +207,20 @@ export interface Scan {
   engineFindings: { ruleKey: string; title: string; outcome: string; severity: string | null; explanation: string; citation: string }[];
   ruleVersions: { ruleKey: string; version: number; citation: string; legalStatus: string }[];
   reportId: string | null;
+  officer: { id: string; name: string; email: string } | null;
+  team: { id: string; name: string } | null;
+  review: ScanReview | null;
+  reviews: ScanReview[];
 }
 
 export interface ScanSummary {
   scanId: string; status: string; eventDate: string; createdAt: string;
   location: string | null; brand: string | null; genericName: string | null; category: string | null;
   imageCount: number; verdict: VerdictOverall | null; verdictIsMock: boolean | null; reportId: string | null;
+  officerName: string | null;
+  teamId: string | null;
+  teamName: string | null;
+  review: ScanReviewSummary | null;
 }
 
 export interface ScanCapability {
