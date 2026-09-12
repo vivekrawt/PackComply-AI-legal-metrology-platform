@@ -348,3 +348,40 @@ button.wide { width: 100%; }
   .ev-foot { flex-wrap: wrap; }
   .ev-foot .ev-note { order: -1; width: 100%; }
 }
+
+/* ---- Sent back for re-checking ----
+   Work a reviewer has handed back to this officer. It sits above the scan button
+   because it is assigned work, not history — a re-check nobody notices is the same
+   as one that was never asked for. */
+.recheck-banner {
+  background: var(--amber-bg); border: 1px solid #e8cf9b; border-left: 4px solid var(--amber);
+  border-radius: 14px; padding: 18px 20px; margin-bottom: 20px;
+}
+.recheck-banner h2 {
+  margin: 0 0 4px; font-size: 1.05rem; color: var(--amber);
+  display: flex; align-items: center; gap: 9px;
+}
+.recheck-banner > p { margin: 0 0 14px; font-size: 0.88rem; color: var(--ink); }
+.recheck-banner .scan-row { border-color: #e8cf9b; }
+.recheck-banner .scan-row:hover { border-color: var(--amber); background: #fffaf0; }
+
+/* ---- Admin approval on the result screen ---- */
+.approval .field-panel-head { align-items: center; margin-bottom: 12px; }
+.approval-hint { margin: 0; font-size: 0.86rem; }
+.approval-note {
+  border-radius: 10px; padding: 12px 14px; margin: 0 0 12px;
+  border: 1px solid var(--line); background: #f8fafd; font-size: 0.88rem;
+}
+.approval-note.accepted { background: var(--teal-bg); border-color: #9fd6cf; }
+.approval-note.rejected { background: var(--red-bg); border-color: #e8b3ae; }
+.approval-note.recapture_requested { background: var(--amber-bg); border-color: #e8cf9b; }
+.approval-note.escalated { background: #e9e4f5; border-color: #c8bde6; }
+.approval-note b { color: var(--navy); }
+.approval-note p { margin: 5px 0 0; color: var(--ink); }
+.approval-note small { display: block; color: var(--ink-soft); font-size: 0.76rem; margin-top: 6px; }
+.approval-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.approval-actions button { flex: 1; min-width: 190px; padding: 12px; }
+
+@media (max-width: 560px) {
+  .approval-actions button { flex: 1 1 100%; }
+}

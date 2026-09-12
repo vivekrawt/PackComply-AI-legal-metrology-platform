@@ -102,6 +102,9 @@ export async function judgeCompliance(
     actor?.id ?? null, t,
   );
 
+  // Name the package from what was read off it, if nobody has named it already.
+  nameProduct(db, inspectionId, verdict);
+
   recordAudit(db, {
     actorId: actor?.id ?? null, actorLabel: actor?.email ?? 'system',
     action: 'compliance.judged', objectType: 'inspection', objectId: inspectionId,
@@ -116,6 +119,44 @@ export async function judgeCompliance(
   });
 
   return { ...verdict, id, rulesSha256: rules.sha256, rulesSources: rules.sources };
+}
+
+// Give the scan a name, so it can be found again in a list.
+//
+// Order of authority: what the auditor typed wins outright, then what the judge
+// read off the label, then the extracted product-name declaration — which is what
+// names a scan when no AI model is configured and the deterministic fallback ran.
+// A name is a label for locating the record; it is never part of the compliance
+// determination, and it never overwrites one a person entered.
+function nameProduct(db: DB, inspectionId: string, verdict: ComplianceVerdict) {
+  const existing = db.prepare(
+    'SELECT id, brand, generic_name FROM products WHERE inspection_id = ?',
+  ).get(inspectionId) as any;
+  if (existing?.generic_name || existing?.brand) return;
+
+  const declared = db.prepare(
+    `SELECT verbatim_text FROM declarations
+      WHERE inspection_id = ? AND decl_type = 'product_name'
+      ORDER BY confidence DESC LIMIT 1`,
+  ).get(inspectionId) as any;
+
+  const name = (verdict.productName ?? '').trim() || (declared?.verbatim_text ?? '').trim();
+  const brand = (verdict.brand ?? '').trim();
+  if (!name && !brand) return;
+
+  const t = now();
+  if (existing) {
+    db.prepare(
+      `UPDATE products SET generic_name = COALESCE(NULLIF(?, ''), generic_name),
+         brand = COALESCE(NULLIF(?, ''), brand), updated_at = ? WHERE id = ?`,
+    ).run(name, brand, t, existing.id);
+  } else {
+    db.prepare(
+      `INSERT INTO products (id, inspection_id, brand, generic_name, package_type,
+         import_status, presentation_mode, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'retail', 'domestic', 'printed', ?, ?)`,
+    ).run(newId('prd'), inspectionId, brand || null, name || null, t, t);
+  }
 }
 
 export function verdictRowToDto(v: any) {

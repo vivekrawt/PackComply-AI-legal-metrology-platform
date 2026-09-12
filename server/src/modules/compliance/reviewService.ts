@@ -38,8 +38,12 @@ function rowToDto(row: any, currentVerdictId: string | null) {
     // The authority the decision was taken under, as it was at the time. Roles
     // change; what a past decision carried must not change with them.
     reviewerRole: row.reviewer_role ?? null,
-    // A super administrator's decision is final — no admin can replace it.
-    final: row.reviewer_role === 'super_admin',
+    // A super administrator's decision is final — but only when it settles the
+    // case. Sending a package back is an instruction to go and re-photograph it,
+    // so the work continues: the auditor acts on it and the admin decides the
+    // result. Locking that would strand the case with nobody able to move it.
+    final: row.reviewer_role === 'super_admin'
+      && (row.decision === 'accepted' || row.decision === 'rejected'),
     // Referred upward and waiting on a super administrator. The admin who raised it
     // cannot decide it further until that happens.
     awaitingSuperAdmin: row.decision === 'escalated',
@@ -93,7 +97,8 @@ export function recordScanReview(
     `SELECT reviewer_role, decision FROM scan_reviews
       WHERE inspection_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
   ).get(inspectionId) as { reviewer_role: string | null; decision: string } | undefined;
-  if (standing?.reviewer_role === 'super_admin' && user.role !== 'super_admin') {
+  const settled = standing?.decision === 'accepted' || standing?.decision === 'rejected';
+  if (standing?.reviewer_role === 'super_admin' && settled && user.role !== 'super_admin') {
     throw forbidden(
       `A super administrator has already decided this case (${standing.decision.replace(/_/g, ' ')}). `
       + 'That decision is final and cannot be changed at admin level.',

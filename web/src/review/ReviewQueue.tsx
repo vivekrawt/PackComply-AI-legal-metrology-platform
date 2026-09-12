@@ -72,24 +72,26 @@ export function ReviewQueue({ mode }: { mode: Mode }) {
   React.useEffect(() => { setFilter(mode === 'queue' ? 'awaiting' : 'all'); }, [mode]);
 
   const all = data?.scans ?? [];
-  const assessed = all.filter((s) => s.verdict != null);
-  // "All scans" is the only view that admits work the auditor has not finished.
+  // Review work is what an auditor has analysed AND handed over. A scan they are
+  // still working on is theirs, not a reviewer's, however far the machine has got.
+  const submitted = all.filter((s) => s.verdict != null && s.submittedAt);
+  // "All scans" is the only view that admits work the auditor has not sent yet.
   const pool = mode === 'all' ? all
-    : mode === 'signed' ? assessed.filter((s) => s.review)
-      : assessed;
+    : mode === 'signed' ? submitted.filter((s) => s.review)
+      : submitted;
 
   const tally = {
-    awaiting: assessed.filter((s) => !s.review).length,
-    accepted: assessed.filter((s) => s.review?.decision === 'accepted').length,
-    rejected: assessed.filter((s) => s.review?.decision === 'rejected').length,
-    recapture: assessed.filter((s) => s.review?.decision === 'recapture_requested').length,
+    awaiting: submitted.filter((s) => !s.review).length,
+    accepted: submitted.filter((s) => s.review?.decision === 'accepted').length,
+    rejected: submitted.filter((s) => s.review?.decision === 'rejected').length,
+    recapture: submitted.filter((s) => s.review?.decision === 'recapture_requested').length,
   };
 
   const needle = q.trim().toLowerCase();
   const scans = pool
     .filter((s) => {
       if (filter === 'all') return true;
-      if (filter === 'awaiting') return s.verdict != null && !s.review;
+      if (filter === 'awaiting') return s.verdict != null && s.submittedAt != null && !s.review;
       if (filter === 'unanalysed') return s.verdict == null;
       return s.review?.decision === filter;
     })

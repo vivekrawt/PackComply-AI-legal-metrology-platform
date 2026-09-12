@@ -378,6 +378,8 @@ describe('reviewer sign-off', () => {
       .field('side', 'top');
     await agent.post(`/api/v1/scans/${scanId}/analyze`).set(H);
     await drainJobs(getDb());
+    // Mirror the real flow: a scan reaches a reviewer only once its auditor sends it.
+    await agent.post(`/api/v1/scans/${scanId}/submit`).set(H);
     return scanId;
   }
 
@@ -605,6 +607,50 @@ describe('reviewer sign-off', () => {
     // Put the reviewer back so the rest of the suite sees the seeded arrangement.
     expect((await sa.post(`/api/v1/teams/${puneHome}/members`).set(H)
       .send({ userId: pune.id })).status).toBe(200);
+  });
+
+  it('keeps a scan out of the review queue until the auditor sends it', async () => {
+    const scanId = (await demoOfficer.post('/api/v1/scans').set(H).send({ product: { brand: 'Unsent' } })).body.scanId;
+    await demoOfficer.post(`/api/v1/scans/${scanId}/images`).set(H)
+      .attach('file', png('unsent-top'), { filename: 'top.png', contentType: 'image/png' })
+      .field('side', 'top');
+
+    // Nothing to send before it has been analysed.
+    const early = await demoOfficer.post(`/api/v1/scans/${scanId}/submit`).set(H);
+    expect(early.status).toBe(422);
+
+    await demoOfficer.post(`/api/v1/scans/${scanId}/analyze`).set(H);
+    await drainJobs(getDb());
+
+    // Analysis finishing is the machine being done, not the auditor.
+    const beforeSend = await reviewer.get('/api/v1/scans?limit=200').set(H);
+    expect(beforeSend.body.scans.find((s: any) => s.scanId === scanId).submittedAt).toBeNull();
+
+    // Only the auditor who captured it can hand it over.
+    expect((await reviewer.post(`/api/v1/scans/${scanId}/submit`).set(H)).status).toBe(403);
+
+    const sent = await demoOfficer.post(`/api/v1/scans/${scanId}/submit`).set(H);
+    expect(sent.status).toBe(200);
+    expect(sent.body.submittedAt).toBeTruthy();
+
+    const afterSend = await reviewer.get('/api/v1/scans?limit=200').set(H);
+    expect(afterSend.body.scans.find((s: any) => s.scanId === scanId).submittedAt).toBeTruthy();
+  });
+
+  it('leaves a super administrator’s send-back open for the admin and the auditor', async () => {
+    const scanId = await analysedScan(demoOfficer, 'Send Back Case');
+    const { agent: sa } = await signIn('superadmin@demo.gov.example');
+
+    const back = await sa.post(`/api/v1/scans/${scanId}/review`).set(H)
+      .send({ decision: 'recapture_requested', reason: 'The back face is unreadable; photograph it again.' });
+    expect(back.status).toBe(201);
+    // Sending a package back is an instruction to go and re-photograph it, so the
+    // work continues — locking it would strand the case with nobody able to move it.
+    expect(back.body.final).toBe(false);
+
+    const adminActs = await reviewer.post(`/api/v1/scans/${scanId}/review`).set(H)
+      .send({ decision: 'accepted', reason: 'Re-read the close-up; the declaration is legible after all.' });
+    expect(adminActs.status).toBe(201);
   });
 
   it('refuses a sign-off on a scan that has never been analysed', async () => {

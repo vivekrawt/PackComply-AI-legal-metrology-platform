@@ -224,6 +224,8 @@ export interface Scan {
   reportId: string | null;
   officer: { id: string; name: string; email: string } | null;
   team: { id: string; name: string } | null;
+  // Null until the auditor hands it over. A scan reaches no review queue before that.
+  submittedAt: string | null;
   review: ScanReview | null;
   reviews: ScanReview[];
 }
@@ -235,6 +237,7 @@ export interface ScanSummary {
   officerName: string | null;
   teamId: string | null;
   teamName: string | null;
+  submittedAt: string | null;
   review: ScanReviewSummary | null;
 }
 

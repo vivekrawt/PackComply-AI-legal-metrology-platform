@@ -1,9 +1,9 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
-import { getDb } from '../db/index.js';
+import { getDb, now } from '../db/index.js';
 import { config } from '../core/config.js';
-import { badRequest } from '../core/errors.js';
+import { badRequest, forbidden, notFound, unprocessable } from '../core/errors.js';
 import { sha256Hex } from '../core/crypto.js';
 import { requireAuth, requirePerm, SESSION_COOKIE } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/security.js';
@@ -261,6 +261,9 @@ scanRouter.get('/scans/:id', requireAuth, requirePerm('inspection.read'), (req, 
     team: db.prepare(
       'SELECT t.id, t.name FROM teams t JOIN inspections i2 ON i2.team_id = t.id WHERE i2.id = ?',
     ).get(req.params.id) ?? null,
+    // Null until the auditor hands it over; a scan reaches no review queue before that.
+    submittedAt: (db.prepare('SELECT submitted_at FROM inspections WHERE id = ?')
+      .get(req.params.id) as any)?.submitted_at ?? null,
     review: latestScanReview(db, req.params.id, verdict?.id ?? null),
     reviews: listScanReviews(db, req.params.id, verdict?.id ?? null),
   });
@@ -336,7 +339,7 @@ scanRouter.get('/scans', requireAuth, requirePerm('inspection.read'), (req, res)
                 WHERE sr.inspection_id = i.id ORDER BY sr.created_at DESC, sr.rowid DESC LIMIT 1
              )) AS reviewer_name,
             ou.name AS officer_name,
-            i.team_id, tm.name AS team_name,
+            i.team_id, tm.name AS team_name, i.submitted_at,
             (SELECT r.id FROM reports r WHERE r.inspection_id = i.id) AS report_id
      FROM inspections i LEFT JOIN products p ON p.inspection_id = i.id
      LEFT JOIN users ou ON ou.id = i.created_by
@@ -354,6 +357,7 @@ scanRouter.get('/scans', requireAuth, requirePerm('inspection.read'), (req, res)
       officerName: r.officer_name ?? null,
       teamId: r.team_id ?? null,
       teamName: r.team_name ?? null,
+      submittedAt: r.submitted_at ?? null,
       // Null means nobody has signed this off yet — which is what puts it in the
       // reviewer's queue. `stale` marks a decision taken against an earlier
       // verdict, i.e. one the package has since been re-analysed past.
@@ -387,6 +391,37 @@ scanRouter.get('/scans/:id/report', requireAuth, requirePerm('report.read'), (re
     correlationId: req.correlationId,
   });
   res.json(report);
+});
+
+// ---- Handing a finished scan to the admin -----------------------------------
+// Submission is an explicit act. Analysis finishing means the machine is done, not
+// that the auditor is: they may still want another face of the package. Until they
+// send it, the scan is theirs and reaches no review queue.
+scanRouter.post('/scans/:id/submit', requireAuth, requirePerm('scan.submit'), (req, res) => {
+  const db = getDb();
+  assertInScope(db, req.user!, req.params.id);
+  const insp = db.prepare('SELECT created_by FROM inspections WHERE id = ?')
+    .get(req.params.id) as { created_by: string } | undefined;
+  if (!insp) throw notFound('Scan not found');
+  if (insp.created_by !== req.user!.id) {
+    throw forbidden('Only the auditor who captured a scan can send it for review');
+  }
+  const verdict = latestVerdict(db, req.params.id);
+  if (!verdict) {
+    throw unprocessable('Analyse this scan before sending it for review — there is nothing to review yet.');
+  }
+
+  const t = now();
+  db.prepare('UPDATE inspections SET submitted_at = ?, submitted_by = ?, updated_at = ? WHERE id = ?')
+    .run(t, req.user!.id, t, req.params.id);
+
+  recordAudit(db, {
+    actorId: req.user!.id, actorLabel: req.user!.email, action: 'scan.submitted',
+    objectType: 'inspection', objectId: req.params.id,
+    after: { verdictId: verdict.id, overall: verdict.overall },
+    correlationId: req.correlationId,
+  });
+  res.json({ submittedAt: t });
 });
 
 // ---- Reviewer sign-off ------------------------------------------------------

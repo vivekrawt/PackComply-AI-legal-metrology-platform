@@ -43,7 +43,8 @@ export const PERMISSIONS = [
   'finding.disposition', // confirm/dismiss/defer
   'finding.override',
   'finding.approve_override', // second-level approval
-  'scan.review', // reviewer sign-off on a field officer's scan
+  'scan.submit', // an auditor handing their finished scan to their admin
+  'scan.review', // reviewer sign-off on an auditor's scan
   'report.finalize',
   'report.read',
   'report.export',
@@ -79,7 +80,7 @@ const USER_PERMISSIONS: Permission[] = [
   'inspection.create', 'inspection.read', 'inspection.edit', 'inspection.annotate',
   'inspection.reinspect',
   'evidence.upload', 'evidence.read', 'processing.run',
-  'declaration.edit', 'evaluation.run',
+  'declaration.edit', 'evaluation.run', 'scan.submit',
   'finding.disposition', 'finding.override',
   'report.finalize', // gated further by finalization policy config (PRD: "policy based")
   'report.read', 'report.export',
@@ -108,7 +109,7 @@ const ADMIN_PERMISSIONS: Permission[] = [
 // permission is never accidentally left unassigned.
 const CAPTURE_PERMISSIONS: Permission[] = [
   'inspection.create', 'inspection.edit', 'evidence.upload',
-  'processing.run', 'declaration.edit', 'evaluation.run',
+  'processing.run', 'declaration.edit', 'evaluation.run', 'scan.submit',
 ];
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {

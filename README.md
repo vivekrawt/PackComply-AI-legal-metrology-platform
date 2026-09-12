@@ -77,9 +77,12 @@ Three deliberate consequences:
   admin with no team matches **nothing** — a permission boundary that falls back to "everything"
   when its input is missing is not a boundary. Migration 007 places every pre-existing admin in a
   team so this can never strand anyone.
-- **Decisions run one way.** Once a super administrator decides a case, an admin cannot overturn,
-  replace or re-open it. The check reads the `reviewer_role` stored *on the decision*, not the
-  reviewer's role today, so demoting someone never retroactively unlocks what they finalised.
+- **Decisions run one way.** Once a super administrator *settles* a case — accepts or rejects it —
+  an admin cannot overturn, replace or re-open it. The check reads the `reviewer_role` stored *on
+  the decision*, not the reviewer's role today, so demoting someone never retroactively unlocks
+  what they finalised. **Sending a package back is the exception**: that is an instruction to go
+  and re-photograph it, so the work continues and both the auditor and the admin can act on it.
+  Locking a send-back would strand the case with nobody able to move it.
 
 Two deliberate consequences:
 
@@ -146,6 +149,11 @@ Verdict                      Compliance ready · Not compliance ready · Needs r
         │                    ├─ Could not be determined  where the images do not settle it
         │                    └─ Requirements met         what the package got right
         ▼
+Send to admin                an explicit act: analysis finishing means the machine is done,
+        │                    not the auditor. Until they send it the scan reaches no review
+        │                    queue. Sent back? it returns to their home screen with the
+        │                    reviewer's reason and a button to photograph the package again
+        ▼
 Scan report                  PDF / JSON — image SHA-256s, the statutory text hash, the model
         │                    version, and the OCR text the verdict was formed from
         ▼
@@ -155,6 +163,13 @@ History                      every scan the officer has run, filterable by outco
 The verdict gives a **status and counts, not a score** (requirement EXT-07): one missing mandatory
 declaration makes a package non-compliant however many other rules pass, so a percentage would
 misrepresent the legal position.
+
+**The package names itself.** The common or generic name is a declaration the Rules require, so a
+judge that has read the label already knows it — `productName` and `brand` come back with the verdict
+and name the record, because a scan listed as "Unnamed product" is one an officer cannot find again.
+A name the auditor typed always wins; failing both, the extracted product-name declaration is used.
+With no AI model configured and no such declaration, the scan honestly stays unnamed rather than
+being given a guess.
 
 **Two assessments, kept separate.** Alongside the AI verdict, the deterministic versioned rule engine
 runs over the same evidence and its findings are shown as a labeled cross-check. They are never merged:
@@ -381,10 +396,10 @@ npm run ocr         # just the PaddleOCR sidecar
 cd server
 npm run dev         # API with reload
 npm run seed        # seed database (no-op if already seeded); delete server/data to reset
-npm test            # 111 tests: engine units (incl. the critical calibration pair), API/workflow/UAT,
-                    # the scan flow, reviewer sign-off, escalation, team isolation and
-                    # decision precedence, and the Gemini and PaddleOCR adapters with the
-                    # network stubbed
+npm test            # 113 tests: engine units (incl. the critical calibration pair), API/workflow/UAT,
+                    # the scan flow, submission, reviewer sign-off, escalation, team
+                    # isolation and decision precedence, and the Gemini and PaddleOCR
+                    # adapters with the network stubbed
 node ../scripts/extract-rules.mjs   # (re)extract the statutory corpus into assets/rules/
 npm run typecheck
 
@@ -420,5 +435,8 @@ npm run dev / build
 - A reviewer's sign-off is a record, not a click: mandatory reason, written to the audit chain, pinned to the
   verdict it judged, refused to whoever captured the scan, and marked stale if that verdict is superseded.
 - The role hierarchy is data, not decoration: an admin's scope predicate is its team and fails closed without
-  one, a super administrator is refused the capture verbs outright, and a super administrator's decision on a
-  case cannot be overturned at admin level.
+  one, a super administrator is refused the capture verbs outright, and a super administrator's decision to
+  accept or reject a case cannot be overturned at admin level.
+- A scan reaches a reviewer only when its auditor sends it. Analysis finishing is the machine being done, not
+  the person — and a package sent back for re-photographing returns to the auditor who captured it, with the
+  reviewer's reason attached and the way to act on it.
