@@ -32,6 +32,7 @@ const FILTERS: Record<Mode, { key: Filter; label: string }[]> = {
     { key: 'accepted', label: 'Accepted' },
     { key: 'rejected', label: 'Rejected' },
     { key: 'recapture_requested', label: 'Sent back' },
+    { key: 'escalated', label: 'Referred up' },
   ],
   all: [
     { key: 'all', label: 'Everything' },
@@ -39,6 +40,7 @@ const FILTERS: Record<Mode, { key: Filter; label: string }[]> = {
     { key: 'accepted', label: 'Accepted' },
     { key: 'rejected', label: 'Rejected' },
     { key: 'recapture_requested', label: 'Sent back' },
+    { key: 'escalated', label: 'Referred up' },
     { key: 'unanalysed', label: 'Still capturing' },
   ],
 };

@@ -1,29 +1,25 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import {
-  api, ATTENTION_META,
-  type AdminRow, type AttentionCase, type AuditorRow, type OrgOverview, type TeamRow,
-} from '../api';
+import { api, type AttentionCase, type OrgOverview } from '../api';
 import { ErrorText, useAsync } from '../components/common';
-import { MagnitudeBar, MonthlyThroughput, StatTiles, fmtWhen } from './widgets';
+import { MonthlyThroughput, StatTiles, fmtWhen } from './widgets';
 
 // The super administrator's landing page.
 //
-// It answers "how is the organization doing", not "what is in my queue" — the
-// queue belongs to the admins. Individual scans are reachable from here, but they
-// are never the point of the page: teams, admins and auditors are.
+// It answers "how is the organization doing" and "what needs me" — nothing else.
+// Per-team, per-admin and per-auditor performance lives in the Organization
+// sections, where each has room to be read properly; repeating leaderboards here
+// only made the page longer without making it more answerable.
+//
+// There is deliberately no org-wide "awaiting review" figure. Undecided work is an
+// admin's queue, not the super administrator's; the number that belongs to them is
+// what has actually been referred up.
 
 export function SuperDashboard() {
   const overview = useAsync(() => api.get<OrgOverview>('/performance/overview'), []);
-  const teams = useAsync(() => api.get<{ teams: TeamRow[] }>('/performance/teams'), []);
-  const admins = useAsync(() => api.get<{ admins: AdminRow[] }>('/performance/admins'), []);
-  const auditors = useAsync(() => api.get<{ auditors: AuditorRow[] }>('/performance/auditors'), []);
   const attention = useAsync(() => api.get<{ cases: AttentionCase[] }>('/performance/attention'), []);
 
   const o = overview.data;
-  const teamRows = teams.data?.teams ?? [];
-  const adminRows = admins.data?.admins ?? [];
-  const auditorRows = auditors.data?.auditors ?? [];
   const cases = attention.data?.cases ?? [];
 
   return (
@@ -31,7 +27,7 @@ export function SuperDashboard() {
       <header className="rv-head">
         <div>
           <h1>Organization overview</h1>
-          <p>Compliance throughput across every team, admin and auditor.</p>
+          <p>Compliance throughput across every team, and the cases waiting on you.</p>
         </div>
       </header>
 
@@ -43,33 +39,39 @@ export function SuperDashboard() {
           <>
             <StatTiles tiles={[
               { label: 'Cases', value: o.scans.total },
-              { label: 'Awaiting review', value: o.scans.awaitingReview, tone: 'awaiting' },
+              { label: 'In progress', value: o.scans.inProgress, hint: 'Auditors still capturing or analysing' },
+              { label: 'Referred to you', value: o.attention, tone: o.attention > 0 ? 'bad' : undefined },
               { label: 'Accepted', value: o.scans.accepted, tone: 'ok' },
               { label: 'Rejected', value: o.scans.rejected, tone: 'bad' },
               { label: 'Sent back', value: o.scans.sentBack, tone: 'warn' },
-              { label: 'Needs attention', value: o.attention, tone: o.attention > 0 ? 'bad' : undefined },
             ]} />
 
             {cases.length > 0 && (
               <section className="rv-panel rv-alert">
-                <h2>{cases.length} case{cases.length === 1 ? '' : 's'} need your attention</h2>
+                <h2>
+                  {cases.length} case{cases.length === 1 ? '' : 's'} referred to you
+                </h2>
                 <p className="muted">
-                  These do not resolve themselves in any admin&rsquo;s queue, which is what makes
-                  them yours.
+                  An admin judged each of these beyond their authority to settle. Only your
+                  decision clears them.
                 </p>
                 <ul className="rv-attention">
                   {cases.slice(0, 4).map((c) => (
                     <li key={c.scanId}>
-                      <span className={`chip ${ATTENTION_META[c.reason].tone}`}>
-                        <span className="ico" aria-hidden="true">!</span>
-                        {ATTENTION_META[c.reason].label}
-                      </span>
+                      <span className="rv-badge escalated">↑ Awaiting you</span>
                       <Link to={`/app/scan/${c.scanId}`}>{c.product ?? 'Unnamed product'}</Link>
-                      <small>{c.teamName ?? 'No team'} · {c.detail}</small>
+                      <small>
+                        {c.escalatedBy ?? 'An admin'} · {c.teamName ?? 'No team'} ·{' '}
+                        {fmtWhen(c.escalatedAt)} — &ldquo;{c.escalationReason}&rdquo;
+                      </small>
                     </li>
                   ))}
                 </ul>
-                <Link className="btn secondary" to="/app/attention">Review all {cases.length} →</Link>
+                {cases.length > 4 && (
+                  <Link className="btn secondary" to="/app/attention">
+                    See all {cases.length} →
+                  </Link>
+                )}
               </section>
             )}
 
@@ -88,109 +90,15 @@ export function SuperDashboard() {
                   { label: 'Suspended', value: o.people.suspended, tone: o.people.suspended > 0 ? 'warn' : undefined },
                 ]} />
                 <p className="rv-note">
-                  A super administrator is not counted in a team: it sits above them.
+                  Each team has one admin. Per-team, per-admin and per-auditor figures are in the
+                  Organization sections — <Link to="/app/teams">Teams</Link>,{' '}
+                  <Link to="/app/admins">Admins</Link> and <Link to="/app/auditors">Auditors</Link>.
                 </p>
               </section>
             </div>
           </>
         )}
-
-        <PerformanceTable
-          title="Team performance"
-          href="/app/teams"
-          empty="No teams yet."
-          rows={teamRows.map((t) => ({
-            key: t.id,
-            to: `/app/teams/${t.id}`,
-            name: t.name,
-            meta: `${t.adminCount} admin${t.adminCount === 1 ? '' : 's'} · ${t.auditorCount} auditor${t.auditorCount === 1 ? '' : 's'}${t.status === 'archived' ? ' · archived' : ''}`,
-            magnitude: t.stats.total,
-            cells: [t.stats.total, t.stats.awaitingReview, t.stats.accepted, t.stats.rejected, t.stats.sentBack],
-          }))}
-          headers={['Cases', 'Awaiting', 'Accepted', 'Rejected', 'Sent back']}
-        />
-
-        <PerformanceTable
-          title="Admin performance"
-          href="/app/admins"
-          empty="No admins yet."
-          note="An admin's unit of work is decisions taken, not scans captured."
-          rows={adminRows.map((a) => ({
-            key: a.id,
-            to: `/app/admins/${a.id}`,
-            name: a.name,
-            meta: `${a.teamName ?? 'No team'} · ${a.teamSize} auditor${a.teamSize === 1 ? '' : 's'} · last decided ${fmtWhen(a.decisions.lastDecisionAt)}`,
-            magnitude: a.decisions.decisions,
-            cells: [a.decisions.decisions, a.queueAwaiting, a.decisions.accepted, a.decisions.rejected, a.decisions.sentBack],
-          }))}
-          headers={['Decisions', 'In queue', 'Accepted', 'Rejected', 'Sent back']}
-        />
-
-        <PerformanceTable
-          title="Auditor performance"
-          href="/app/auditors"
-          empty="No auditors yet."
-          rows={auditorRows.map((a) => ({
-            key: a.id,
-            to: `/app/auditors/${a.id}`,
-            name: a.name,
-            meta: `${a.teamName ?? 'No team'} · last active ${fmtWhen(a.stats.lastActivityAt)}`,
-            magnitude: a.stats.total,
-            cells: [a.stats.total, a.stats.inProgress, a.stats.accepted, a.stats.rejected, a.stats.sentBack],
-          }))}
-          headers={['Cases', 'In progress', 'Accepted', 'Rejected', 'Sent back']}
-        />
-
-        <p className="rv-note">
-          Counts describe how much work moved, not how well anyone did it. A high rejection
-          count can mean a careful reviewer or a difficult shelf; it is a prompt to look, never
-          a verdict on a person.
-        </p>
       </div>
     </>
-  );
-}
-
-interface PerfRow {
-  key: string; to: string; name: string; meta: string;
-  magnitude: number; cells: number[];
-}
-
-function PerformanceTable({ title, href, headers, rows, empty, note }: {
-  title: string; href: string; headers: string[]; rows: PerfRow[]; empty: string; note?: string;
-}) {
-  const max = Math.max(...rows.map((r) => r.magnitude), 1);
-  return (
-    <section className="rv-panel">
-      <div className="rv-panel-head">
-        <h2>{title}</h2>
-        <Link to={href}>View all →</Link>
-      </div>
-      {note && <p className="muted rv-sub">{note}</p>}
-      {rows.length === 0 ? <p className="muted">{empty}</p> : (
-        <div className="rv-scroll">
-          <table className="data rv-perf">
-            <thead>
-              <tr>
-                <th>Name</th>
-                {headers.map((h) => <th key={h} className="num">{h}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.slice(0, 8).map((r) => (
-                <tr key={r.key}>
-                  <td>
-                    <Link to={r.to}><b>{r.name}</b></Link>
-                    <div className="muted rv-row-sub">{r.meta}</div>
-                    <MagnitudeBar value={r.magnitude} max={max} />
-                  </td>
-                  {r.cells.map((c, i) => <td key={i} className="num">{c}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
   );
 }

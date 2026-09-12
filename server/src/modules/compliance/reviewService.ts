@@ -1,7 +1,7 @@
 import type { DB } from '../../db/index.js';
 import { now } from '../../db/index.js';
 import { newId } from '../../core/ids.js';
-import { forbidden, notFound, unprocessable } from '../../core/errors.js';
+import { badRequest, forbidden, notFound, unprocessable } from '../../core/errors.js';
 import { recordAudit } from '../audit/service.js';
 import type { SessionUser } from '../auth/service.js';
 import { latestVerdict } from './service.js';
@@ -13,7 +13,10 @@ import { latestVerdict } from './service.js';
 // "who approved this" unanswerable — the one question an enforcement record has to
 // be able to answer.
 
-export const REVIEW_DECISIONS = ['accepted', 'rejected', 'recapture_requested'] as const;
+// `escalated` is an admin referring a case upward: it clears the admin's queue,
+// lands in the super administrator's attention list, and can only be cleared by a
+// super administrator's decision.
+export const REVIEW_DECISIONS = ['accepted', 'rejected', 'recapture_requested', 'escalated'] as const;
 export type ReviewDecision = (typeof REVIEW_DECISIONS)[number];
 
 export interface ScanReviewInput {
@@ -37,6 +40,9 @@ function rowToDto(row: any, currentVerdictId: string | null) {
     reviewerRole: row.reviewer_role ?? null,
     // A super administrator's decision is final — no admin can replace it.
     final: row.reviewer_role === 'super_admin',
+    // Referred upward and waiting on a super administrator. The admin who raised it
+    // cannot decide it further until that happens.
+    awaitingSuperAdmin: row.decision === 'escalated',
     verdictId: row.verdict_id,
     stale: row.verdict_id != null && currentVerdictId != null && row.verdict_id !== currentVerdictId,
     createdAt: row.created_at,
@@ -91,6 +97,21 @@ export function recordScanReview(
     throw forbidden(
       `A super administrator has already decided this case (${standing.decision.replace(/_/g, ' ')}). `
       + 'That decision is final and cannot be changed at admin level.',
+    );
+  }
+  // Referring a case upward hands it over. Letting the same admin then decide it
+  // anyway would make the referral meaningless, so the case is theirs no longer
+  // until a super administrator has answered it.
+  if (standing?.decision === 'escalated' && user.role !== 'super_admin') {
+    throw forbidden(
+      'This case has been referred to a super administrator and is waiting on their decision. '
+      + 'It cannot be decided at admin level until they have answered it.',
+    );
+  }
+  // There is nobody above a super administrator to refer a case to.
+  if (input.decision === 'escalated' && user.role === 'super_admin') {
+    throw badRequest(
+      'You are the final authority on this case — decide it rather than referring it upward.',
     );
   }
 

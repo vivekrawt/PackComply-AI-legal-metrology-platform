@@ -8,7 +8,7 @@ import { rateLimit } from '../middleware/security.js';
 import { validateBody } from '../middleware/validate.js';
 import { config } from '../core/config.js';
 import { recordAudit, verifyAuditChain } from '../modules/audit/service.js';
-import { badRequest, forbidden, notFound } from '../core/errors.js';
+import { badRequest, conflict, forbidden, notFound } from '../core/errors.js';
 import { ROLES, ROLE_DESCRIPTIONS, ROLE_LABELS, ROLE_PERMISSIONS } from '../modules/auth/permissions.js';
 import { getConfigItem, setConfigItem } from '../modules/admin/configService.js';
 import { anyMock, mockComponents, providerModelVersions } from '../providers/registry.js';
@@ -83,6 +83,18 @@ coreRouter.post(
       const team = db.prepare('SELECT id FROM teams WHERE id = ? AND org_id = ?')
         .get(teamId, req.user!.orgId);
       if (!team) throw badRequest('That team does not exist in your organization');
+      // One admin per team — see teams/service.ts assignUserToTeam.
+      if (req.body.role === 'admin') {
+        const sitting = db.prepare(
+          "SELECT name FROM users WHERE team_id = ? AND role = 'admin' AND status != 'offboarded'",
+        ).get(teamId) as { name: string } | undefined;
+        if (sitting) {
+          throw conflict(
+            `${sitting.name} already runs that team, and a team has one admin. `
+            + 'Choose another team for this admin.',
+          );
+        }
+      }
     }
     const id = createUser(db, { ...req.body, teamId, orgId: req.user!.orgId });
     recordAudit(db, {

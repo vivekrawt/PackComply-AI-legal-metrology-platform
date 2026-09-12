@@ -199,8 +199,8 @@ export function TeamDetail() {
 
         <div className="rv-two-col">
           <MemberPanel
-            title="Admins"
-            blurb="They review everything this team captures."
+            title="Admin"
+            blurb="One per team — they review everything this team captures."
             people={d.admins}
             emptyWarning="Nothing this team captures will be reviewed until it has an admin."
             mayManage={mayManage}
@@ -222,7 +222,8 @@ export function TeamDetail() {
             <h2>Add someone to this team</h2>
             <p className="muted rv-sub">
               Moving a person here changes whose queue their work reaches. Their existing cases
-              stay with the team that owned them.
+              stay with the team that owned them. A team takes one admin — move the sitting one
+              off first to replace them.
             </p>
             <div className="btn-row">
               <select value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Person to add">

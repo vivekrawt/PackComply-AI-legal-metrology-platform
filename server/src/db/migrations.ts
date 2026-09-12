@@ -498,4 +498,27 @@ CREATE INDEX idx_users_team ON users(team_id, role);
 CREATE INDEX idx_insp_team ON inspections(team_id, status);
 `,
   },
+  {
+    // One admin per team.
+    //
+    // A team has a single reviewer, so "the admin of this team" is always an
+    // unambiguous person. Migration 007 could place several admins in the same
+    // backfilled team, so any such team keeps its earliest-created admin and the
+    // rest are unassigned — deliberately visible rather than silently resolved: an
+    // admin with no team has no queue, and a super administrator must place them.
+    //
+    // The `escalated` decision needs no schema: scan_reviews.decision is free text
+    // and the API validates the value.
+    id: '008_one_admin_per_team',
+    sql: `
+UPDATE users SET team_id = NULL
+ WHERE role = 'admin'
+   AND team_id IS NOT NULL
+   AND id <> (
+     SELECT u2.id FROM users u2
+      WHERE u2.team_id = users.team_id AND u2.role = 'admin'
+      ORDER BY u2.created_at, u2.id LIMIT 1
+   );
+`,
+  },
 ];

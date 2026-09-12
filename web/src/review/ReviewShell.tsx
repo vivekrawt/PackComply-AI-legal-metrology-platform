@@ -79,7 +79,7 @@ export function ReviewShell({ user, demo, mockComponents }: {
                 <span className="rv-nav-ico" aria-hidden="true">◎</span>Overview
               </NavLink>
               <NavLink to="/app/attention">
-                <span className="rv-nav-ico" aria-hidden="true">!</span>Needs attention{count(badge)}
+                <span className="rv-nav-ico" aria-hidden="true">↑</span>Referred to you{count(badge)}
               </NavLink>
               <NavLink to="/app/all-scans">
                 <span className="rv-nav-ico" aria-hidden="true">▤</span>All scans
