@@ -82,12 +82,17 @@ describe('self-registration', () => {
 });
 
 describe('capture rules', () => {
-  it('publishes the sides to ask for and the image floor', async () => {
+  it('publishes the sides to ask for, the image floor and the ceiling', async () => {
     const res = await officer.get('/api/v1/scans/capability').set(H);
     expect(res.status).toBe(200);
     expect(res.body.minImages).toBe(1);
-    expect(res.body.sides).toEqual(['top', 'bottom', 'left', 'right']);
+    expect(res.body.maxImages).toBe(8);
+    // Three faces are on screen from the start; the rest are offered as the
+    // officer fills them. The two lists together are exactly the ceiling, so a
+    // face can never be offered that the scan has no room for.
+    expect(res.body.sides).toEqual(['front', 'back', 'top']);
     expect(res.body.extraSides).toContain('other');
+    expect(res.body.sides.length + res.body.extraSides.length).toBe(res.body.maxImages);
     // Whether an AI verdict is actually available is the server's answer, not a
     // client guess — here it is the pinned deterministic fallback.
     expect(res.body.judge.isMock).toBe(true);
@@ -125,6 +130,73 @@ describe('capture rules', () => {
       expect(res.status).toBe(201);
     }
     expect((await officer.post(`/api/v1/scans/${scan}/analyze`).set(H)).status).toBe(202);
+  });
+
+  it('holds eight images, and refuses a ninth face', async () => {
+    const scan = (await officer.post('/api/v1/scans').set(H).send({})).body.scanId;
+    const faces = ['front', 'back', 'top', 'bottom', 'left', 'right', 'closeup', 'other'];
+    for (const side of faces) {
+      const res = await officer.post(`/api/v1/scans/${scan}/images`).set(H)
+        .attach('file', png(`${scan}-${side}`), { filename: `${side}.png`, contentType: 'image/png' })
+        .field('side', side);
+      expect(res.status).toBe(201);
+      expect(res.body.maxImages).toBe(8);
+    }
+    expect((await officer.get(`/api/v1/scans/${scan}`).set(H)).body.images).toHaveLength(8);
+
+    // 'side' is a face the evidence store knows but the scan flow does not offer,
+    // so it is refused on the vocabulary before the ceiling is even consulted.
+    const ninth = await officer.post(`/api/v1/scans/${scan}/images`).set(H)
+      .attach('file', png(`${scan}-ninth`), { filename: 'ninth.png', contentType: 'image/png' })
+      .field('side', 'side');
+    expect(ninth.status).toBe(400);
+  });
+
+  it('retakes a face instead of stacking a second image on it', async () => {
+    const scan = (await officer.post('/api/v1/scans').set(H).send({})).body.scanId;
+    const shoot = (side: string, salt: string) => officer.post(`/api/v1/scans/${scan}/images`).set(H)
+      .attach('file', png(salt), { filename: `${side}.png`, contentType: 'image/png' })
+      .field('side', side);
+
+    const blurry = await shoot('front', `${scan}-blurry`);
+    expect(blurry.status).toBe(201);
+    const sharp = await shoot('front', `${scan}-sharp`);
+    expect(sharp.status).toBe(201);
+
+    // One face, one image: the first attempt is retired rather than sent to OCR
+    // alongside the one the officer decided to keep.
+    const images = (await officer.get(`/api/v1/scans/${scan}`).set(H)).body.images;
+    expect(images).toHaveLength(1);
+    expect(images[0].id).toBe(sharp.body.assetId);
+    expect(images[0].side).toBe('front');
+
+    // And the retake costs nothing against the ceiling: seven more faces still fit.
+    for (const side of ['back', 'top', 'bottom', 'left', 'right', 'closeup', 'other']) {
+      expect((await shoot(side, `${scan}-${side}`)).status).toBe(201);
+    }
+    expect((await officer.get(`/api/v1/scans/${scan}`).set(H)).body.images).toHaveLength(8);
+  });
+
+  it('gives the slot back when the auditor discards a capture', async () => {
+    const scan = (await officer.post('/api/v1/scans').set(H).send({})).body.scanId;
+    const shot = await officer.post(`/api/v1/scans/${scan}/images`).set(H)
+      .attach('file', png(`${scan}-discard`), { filename: 'front.png', contentType: 'image/png' })
+      .field('side', 'front');
+    expect(shot.status).toBe(201);
+
+    const gone = await officer.delete(`/api/v1/scans/${scan}/images/${shot.body.assetId}`).set(H);
+    expect(gone.status).toBe(200);
+    expect(gone.body.images).toHaveLength(0);
+    expect(gone.body.readyToAnalyze).toBe(false);
+
+    // Someone else's capture is not theirs to discard, even inside the same scope.
+    const other = (await signup('discarder@packcomply.test', 'Other Officer')).agent;
+    const second = await officer.post(`/api/v1/scans/${scan}/images`).set(H)
+      .attach('file', png(`${scan}-kept`), { filename: 'back.png', contentType: 'image/png' })
+      .field('side', 'back');
+    const denied = await other.delete(`/api/v1/scans/${scan}/images/${second.body.assetId}`).set(H);
+    expect(denied.status).toBeGreaterThanOrEqual(403);
+    expect((await officer.get(`/api/v1/scans/${scan}`).set(H)).body.images).toHaveLength(1);
   });
 
   it('rejects an unknown package side', async () => {

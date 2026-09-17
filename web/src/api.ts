@@ -215,7 +215,8 @@ export const REVIEW_META: Record<ReviewDecision, {
 
 export interface Scan {
   scanId: string; status: ScanStatus; createdAt: string; eventDate: string;
-  product: Record<string, any> | null; location: string | null; minImages: number;
+  product: Record<string, any> | null; location: string | null;
+  minImages: number; maxImages: number;
   images: ScanImage[];
   progress: { total: number; done: number; pending: number; errors: string[] };
   verdict: Verdict | null;
@@ -242,7 +243,7 @@ export interface ScanSummary {
 }
 
 export interface ScanCapability {
-  minImages: number; sides: string[]; extraSides: string[];
+  minImages: number; maxImages: number; sides: string[]; extraSides: string[];
   judge: { provider: string; modelVersion: string; isMock: boolean };
   rules: { available: boolean; sources: string[]; sha256: string };
 }

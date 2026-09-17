@@ -129,8 +129,11 @@ Sign up                      creates a `user` account in its own organization; r
 Scan the product             → Upload the image   ·   Click image using the camera
         │
         ▼
-Capture the sides            top · bottom · left · right, each optional individually
-        │                    "+ Add another side image" for front/back/close-up/other
+Capture the sides            front · back · top to begin with, each optional individually
+        │                    fill every slot on screen and another appears — bottom, left, right,
+        │                    close-up, other — up to EIGHT images for one package
+        │                    a second photo of a face already captured replaces it, so a retake
+        │                    costs nothing against the eight and never reaches OCR twice
         │                    AT LEAST ONE image required — a small packet can carry its whole
         │                    label on one face; the judge is told which faces it did and did
         │                    not see, so an unphotographed face reads "unclear", not "missing"

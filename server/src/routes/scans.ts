@@ -3,7 +3,7 @@ import { z } from 'zod';
 import multer from 'multer';
 import { getDb, now } from '../db/index.js';
 import { config } from '../core/config.js';
-import { badRequest, forbidden, notFound, unprocessable } from '../core/errors.js';
+import { badRequest, conflict, forbidden, notFound, unprocessable } from '../core/errors.js';
 import { sha256Hex } from '../core/crypto.js';
 import { requireAuth, requirePerm, SESSION_COOKIE } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/security.js';
@@ -11,7 +11,7 @@ import { validateBody } from '../middleware/validate.js';
 import { assertInScope, scopeWhere, signup } from '../modules/auth/service.js';
 import { anyMock, mockComponents, providers } from '../providers/registry.js';
 import { createInspection, getInspection, upsertProduct } from '../modules/inspections/service.js';
-import { ingestFileEvidence, listInspectionAssets } from '../modules/evidence/service.js';
+import { deleteAsset, ingestFileEvidence, listInspectionAssets } from '../modules/evidence/service.js';
 import { enqueueJob } from '../modules/processing/queue.js';
 import { listFindings } from '../modules/findings/service.js';
 import { listEvaluations } from '../modules/evaluation/service.js';
@@ -38,10 +38,20 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: con
 // faces it did and did not see so it can answer 'unclear' rather than 'missing'.
 export const MIN_SCAN_IMAGES = 1;
 
+// Ceiling on one package. Eight faces is past what any retail package physically
+// has, so it does not cut an honest capture short; it is here because every image
+// is an OCR pass and a slice of the judge's context, and a scan carrying thirty
+// photos of the same carton costs both without telling anyone anything new.
+export const MAX_SCAN_IMAGES = 8;
+
 // The scan flow's own vocabulary for package faces, in the order the capture
-// screen asks for them. They map onto the evidence store's face labels 1:1.
-export const SCAN_SIDES = ['top', 'bottom', 'left', 'right'] as const;
-export const EXTRA_SIDES = ['front', 'back', 'closeup', 'other'] as const;
+// screen asks for them. The first three are on screen from the start — front, back
+// and top are where the declarations sit on almost every package — and the rest are
+// offered one at a time as the officer fills what is already there. The two lists
+// together are exactly MAX_SCAN_IMAGES faces, so the ceiling and the vocabulary
+// cannot drift apart. They map onto the evidence store's face labels 1:1.
+export const SCAN_SIDES = ['front', 'back', 'top'] as const;
+export const EXTRA_SIDES = ['bottom', 'left', 'right', 'closeup', 'other'] as const;
 const ALL_SIDES = [...SCAN_SIDES, ...EXTRA_SIDES] as const;
 
 // ---- Registration -----------------------------------------------------------
@@ -73,6 +83,7 @@ scanRouter.get('/scans/capability', requireAuth, (_req, res) => {
   const rules = rulesCorpusStatus();
   res.json({
     minImages: MIN_SCAN_IMAGES,
+    maxImages: MAX_SCAN_IMAGES,
     sides: SCAN_SIDES,
     extraSides: EXTRA_SIDES,
     judge: {
@@ -135,19 +146,73 @@ scanRouter.post(
     if (!ALL_SIDES.includes(side as any)) {
       throw badRequest(`Unknown package side '${side}'. Expected one of: ${ALL_SIDES.join(', ')}`);
     }
+
+    // A face is photographed once. Sending a second image for a face the scan
+    // already holds is a retake — the officer decided the first one was no good —
+    // so the old capture is retired rather than stacked alongside the new one.
+    // Without that, a blurry first attempt would still reach OCR and the judge,
+    // and three retakes of one face would eat three of the eight slots.
+    const before = listInspectionAssets(db, req.params.id).filter((a: any) => a.kind === 'image');
+    const replacing = before.filter((a: any) => a.faceLabel === side && !a.legalHold);
+    if (before.length - replacing.length >= MAX_SCAN_IMAGES) {
+      throw conflict(
+        `This scan already holds ${MAX_SCAN_IMAGES} package images, which is the limit. `
+        + `Remove one of the captured faces before adding another.`,
+      );
+    }
+
     const assetId = await ingestFileEvidence(db, req.user!, req.params.id, file, {
       faceLabel: side,
       source: req.body.source === 'camera' ? 'camera' : 'upload',
       capturedAt: new Date().toISOString(),
     }, req.correlationId);
+    // Retire the old capture only once the new one is safely stored: a replacement
+    // the content checks refuse must not cost the officer the image they had.
+    for (const old of replacing) {
+      deleteAsset(db, req.user!, old.id, `Replaced by a newer ${side} capture`, req.correlationId);
+    }
+
     const images = listInspectionAssets(db, req.params.id).filter((a: any) => a.kind === 'image');
     res.status(201).json({
       assetId,
       images: images.map((a: any) => ({ id: a.id, side: a.faceLabel, name: a.originalName, sha256: a.sha256 })),
       readyToAnalyze: images.length >= MIN_SCAN_IMAGES,
       minImages: MIN_SCAN_IMAGES,
+      maxImages: MAX_SCAN_IMAGES,
     });
   }),
+);
+
+// Discarding a capture the officer does not want to send. Soft delete, like every
+// other route into the evidence store: the SHA-256 stays on the row, so a report
+// that already cited the image still verifies against what it cited. Deleting
+// evidence off someone else's case stays super_admin work (DEL-01) — this is the
+// narrow case of the auditor dropping a face from a package they are still
+// photographing, which is what makes a freed slot mean a freed slot.
+scanRouter.delete(
+  '/scans/:id/images/:assetId',
+  requireAuth, requirePerm('evidence.upload'),
+  (req, res) => {
+    const db = getDb();
+    assertInScope(db, req.user!, req.params.id);
+    const insp = db.prepare('SELECT created_by FROM inspections WHERE id = ?')
+      .get(req.params.id) as { created_by: string } | undefined;
+    if (!insp) throw notFound('Scan not found');
+    if (insp.created_by !== req.user!.id) {
+      throw forbidden('Only the auditor who captured a scan can discard its images');
+    }
+    const asset = listInspectionAssets(db, req.params.id).find((a: any) => a.id === req.params.assetId);
+    if (!asset) throw notFound('Image not found on this scan');
+
+    deleteAsset(db, req.user!, req.params.assetId, 'Discarded by the auditor during capture', req.correlationId);
+    const images = listInspectionAssets(db, req.params.id).filter((a: any) => a.kind === 'image');
+    res.json({
+      images: images.map((a: any) => ({ id: a.id, side: a.faceLabel, name: a.originalName, sha256: a.sha256 })),
+      readyToAnalyze: images.length >= MIN_SCAN_IMAGES,
+      minImages: MIN_SCAN_IMAGES,
+      maxImages: MAX_SCAN_IMAGES,
+    });
+  },
 );
 
 // Kick off OCR → declaration extraction → rule evaluation → AI compliance judge.
@@ -234,6 +299,7 @@ scanRouter.get('/scans/:id', requireAuth, requirePerm('inspection.read'), (req, 
     product: insp.product,
     location: insp.location,
     minImages: MIN_SCAN_IMAGES,
+    maxImages: MAX_SCAN_IMAGES,
     images: images.map((a: any) => ({
       id: a.id, side: a.faceLabel, name: a.originalName, sha256: a.sha256,
       sizeBytes: a.sizeBytes, capturedAt: a.capturedAt, source: a.source,
