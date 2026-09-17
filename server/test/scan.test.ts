@@ -5,7 +5,8 @@ import { seed } from '../src/db/seed.js';
 import { createApp } from '../src/app.js';
 import { registerPipelineHandlers } from '../src/modules/processing/pipeline.js';
 import { registerComplianceHandlers } from '../src/modules/compliance/jobs.js';
-import { drainJobs, reclaimStaleJobs } from '../src/modules/processing/queue.js';
+import { backoffFor, drainJobs, reclaimStaleJobs } from '../src/modules/processing/queue.js';
+import { TransientError, isTransient } from '../src/core/errors.js';
 import { sha256Hex } from '../src/core/crypto.js';
 import { loadRulesCorpus } from '../src/modules/compliance/rulesContext.js';
 import { loadScanImages, requireScanReport, scanReportPdf } from '../src/modules/compliance/scanReport.js';
@@ -221,6 +222,104 @@ describe('capture rules', () => {
 // and the judge - shown the other three as simply carrying no text - returned
 // "non_compliant, 0.95 confident, net quantity and manufacturer details missing".
 // The face it never read held the ingredients and nutrition panel.
+// A dependency being down is not the image's fault, and must not be paid for out of
+// the image's retry budget. The Ching's Secret scan burned three attempts in about
+// forty seconds against an OCR sidecar that needs tens of seconds just to load its
+// models, and three faces of a package were dead-lettered for it.
+describe('backoff for a dependency that is down', () => {
+  it('waits far longer for a transient failure than a real one', () => {
+    // A job that failed on its own merits is retried briskly - waiting changes
+    // nothing about a corrupt image.
+    expect(backoffFor(1, false)).toBe(1_000);
+    expect(backoffFor(2, false)).toBe(2_000);
+
+    // A service that is down gets long enough to actually come back.
+    expect(backoffFor(1, true)).toBe(15_000);
+    expect(backoffFor(2, true)).toBe(30_000);
+    expect(backoffFor(3, true)).toBe(60_000);
+    expect(backoffFor(9, true)).toBe(60_000); // capped, not unbounded
+
+    // The whole transient ladder has to outlast a sidecar restart. Under the old
+    // behaviour the three attempts were spent inside about a second.
+    const total = [1, 2, 3, 4, 5, 6, 7].reduce((n, a) => n + backoffFor(a, true), 0);
+    expect(total).toBeGreaterThan(120_000);
+  });
+
+  it('marks an unreachable OCR service transient', () => {
+    expect(isTransient(new TransientError('PaddleOCR service unavailable: ...'))).toBe(true);
+    // A rejected image is the image's problem and stays a normal failure.
+    expect(isTransient(new Error('PaddleOCR service rejected the image (HTTP 415)'))).toBe(false);
+  });
+
+  it('holds a backed-off job back from the worker, and releases it when asked again', async () => {
+    const db = getDb();
+    const scan = (await officer.post('/api/v1/scans').set(H).send({ product: { brand: 'Backoff' } })).body.scanId;
+    await officer.post(`/api/v1/scans/${scan}/images`).set(H)
+      .attach('file', png('backoff-front'), { filename: 'front.png', contentType: 'image/png' })
+      .field('side', 'front');
+    await officer.post(`/api/v1/scans/${scan}/analyze`).set(H);
+    await drainJobs(db);
+
+    const job = db.prepare(
+      `SELECT id, idempotency_key FROM processing_jobs
+        WHERE type = 'process_evidence'
+          AND target_id IN (SELECT id FROM evidence_assets WHERE inspection_id = ?) LIMIT 1`,
+    ).get(scan) as { id: string; idempotency_key: string };
+
+    // A job queued but not yet due is invisible to the worker rather than spun on.
+    const later = new Date(Date.now() + 60_000).toISOString();
+    db.prepare("UPDATE processing_jobs SET status = 'queued', next_attempt_at = ? WHERE id = ?")
+      .run(later, job.id);
+    await drainJobs(db);
+    expect((db.prepare('SELECT status FROM processing_jobs WHERE id = ?').get(job.id) as any).status)
+      .toBe('queued');
+
+    // Asking for the work again cancels the wait: someone who has just restarted
+    // the service should not sit out a minute meant to spare a dead one.
+    await officer.post(`/api/v1/scans/${scan}/analyze`).set(H).send({ force: true });
+    expect((db.prepare('SELECT next_attempt_at FROM processing_jobs WHERE id = ?').get(job.id) as any)
+      .next_attempt_at).toBeNull();
+    await drainJobs(db);
+    expect((db.prepare('SELECT status FROM processing_jobs WHERE id = ?').get(job.id) as any).status)
+      .toBe('completed');
+  });
+});
+
+// The officer was never told. progress.errors carried every dead-lettered OCR job,
+// but it was only rendered on the "analysis did not complete" screen - so a scan
+// that produced a verdict from two of five faces showed a confident result and no
+// sign at all that the other three had been skipped.
+describe('unread faces are visible to the officer', () => {
+  it('reports per-image whether the recogniser actually read it', async () => {
+    const db = getDb();
+    const scan = (await officer.post('/api/v1/scans').set(H).send({ product: { brand: 'Unread' } })).body.scanId;
+    for (const side of ['front', 'back']) {
+      await officer.post(`/api/v1/scans/${scan}/images`).set(H)
+        .attach('file', png(`unread-${side}`), { filename: `${side}.png`, contentType: 'image/png' })
+        .field('side', side);
+    }
+    await officer.post(`/api/v1/scans/${scan}/analyze`).set(H);
+    await drainJobs(db);
+
+    const before = await officer.get(`/api/v1/scans/${scan}`).set(H);
+    expect(before.body.images.every((i: any) => i.read)).toBe(true);
+
+    // Now the Ching's Secret shape: one face dead-lettered by a service outage.
+    const back = before.body.images.find((i: any) => i.side === 'back');
+    db.prepare(
+      "UPDATE processing_jobs SET status = 'dead_letter', error = ? WHERE type = 'process_evidence' AND target_id = ?",
+    ).run('PaddleOCR service unavailable: could not reach the OCR service', back.id);
+
+    const after = await officer.get(`/api/v1/scans/${scan}`).set(H);
+    const faces = Object.fromEntries(after.body.images.map((i: any) => [i.side, i.read]));
+    expect(faces).toEqual({ front: true, back: false });
+    // The verdict still stands, so the screen shows it - which is exactly why the
+    // unread face has to be reported alongside rather than instead of it.
+    expect(after.body.status).toBe('ready');
+    expect(after.body.progress.errors.join(' ')).toMatch(/service unavailable/);
+  });
+});
+
 describe('absence withheld while a face is unread', () => {
   const check = (parameter: string, status: 'present' | 'missing' | 'unclear') => ({
     parameter, ruleReference: 'Rule 6(1)(c)', status, observedText: '', issue: 'Not found.', remedy: 'Declare it.',

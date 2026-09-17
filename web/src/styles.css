@@ -126,6 +126,12 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .error-text { color: var(--red); font-weight: 600; font-size: 0.88rem; }
 .ok-text { color: var(--teal); font-weight: 600; font-size: 0.88rem; }
 .warn-box { background: var(--amber-bg); border: 1px solid #e8cf9b; color: var(--amber); border-radius: 6px; padding: 8px 12px; font-size: 0.85rem; margin: 8px 0; }
+/* The unread-faces warning carries an action, so it needs room the inline warn-box
+   does not give: the officer has to be able to fix it, not just be told. */
+.warn-box.unread-faces { padding: 12px 14px; line-height: 1.45; }
+.warn-box.unread-faces button { margin-top: 10px; }
+.warn-box .unread-why { margin: 8px 0 0; padding-left: 18px; font-size: 0.8rem; opacity: 0.85; }
+.warn-box .unread-why li { margin: 2px 0; }
 .legal-flag { background: #e9e4f5; color: #4d3f80; border-radius: 4px; padding: 1px 6px; font-size: 0.72rem; font-weight: 700; }
 
 /* Workbench */

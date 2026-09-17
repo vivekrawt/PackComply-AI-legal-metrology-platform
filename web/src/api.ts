@@ -151,6 +151,10 @@ export interface Verdict {
 export interface ScanImage {
   id: string; side: string | null; name: string | null; sha256: string;
   sizeBytes: number | null; capturedAt: string | null; source: string | null;
+  // Whether the recogniser actually read this face. An image nobody read is not an
+  // image with nothing on it, and a verdict drawn from the rest has a hole in it
+  // that the officer has to be able to see.
+  read: boolean;
 }
 
 // Per-image OCR boxes for the evidence viewer. `processed` distinguishes an image

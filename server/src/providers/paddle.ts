@@ -17,6 +17,7 @@
 // ============================================================================
 import { config } from '../core/config.js';
 import { logger } from '../core/logger.js';
+import { TransientError } from '../core/errors.js';
 import type { AssetInput, OcrBlock, OCRProvider, OcrResult } from './types.js';
 
 const SUPPORTED_MIME = ['image/jpeg', 'image/png', 'image/bmp', 'image/webp'];
@@ -155,7 +156,9 @@ export class PaddleOCRProvider implements OCRProvider {
             + 'Start it with `npm run ocr` (see ocr-service/README.md).';
         }
         if (attempt < maxAttempts) { await this.backoff(attempt, lastError); continue; }
-        throw new Error(`PaddleOCR service unavailable: ${lastError}`);
+        // Transient: the sidecar is down or still loading its models. The queue waits
+        // it out rather than burning this image's attempts in a few seconds.
+        throw new TransientError(`PaddleOCR service unavailable: ${lastError}`);
       } finally {
         clearTimeout(timer);
       }
@@ -169,7 +172,7 @@ export class PaddleOCRProvider implements OCRProvider {
       lastError = `HTTP ${res.status}: ${detail}`;
       if (attempt < maxAttempts) { await this.backoff(attempt, lastError); continue; }
     }
-    throw new Error(
+    throw new TransientError(
       `PaddleOCR service failed after ${maxAttempts} attempts — ${lastError}. `
       + 'The evidence is saved; re-run processing once the service is healthy.',
     );

@@ -3,6 +3,7 @@ import { now } from '../../db/index.js';
 import { newId } from '../../core/ids.js';
 import { config } from '../../core/config.js';
 import { logger } from '../../core/logger.js';
+import { isTransient } from '../../core/errors.js';
 import { recordAudit } from '../audit/service.js';
 
 // DB-backed async job queue (NFR-RELIAB-01): queued → processing → completed |
@@ -27,6 +28,13 @@ export function enqueueJob(
     .prepare("SELECT id, status FROM processing_jobs WHERE idempotency_key = ?")
     .get(j.idempotencyKey) as any;
   if (existing && existing.status !== 'failed' && existing.status !== 'dead_letter' && existing.status !== 'cancelled') {
+    // Asking for the work again cancels any backoff it is sitting out. Someone who
+    // has just restarted the OCR service and pressed re-analyse should not wait out
+    // a minute that was only ever there to avoid hammering a service that was down.
+    if (existing.status === 'queued') {
+      db.prepare('UPDATE processing_jobs SET next_attempt_at = NULL, updated_at = ? WHERE id = ?')
+        .run(now(), existing.id);
+    }
     return { jobId: existing.id, deduplicated: true }; // refresh/retry never duplicates work
   }
   const id = newId('job');
@@ -35,16 +43,22 @@ export function enqueueJob(
     `INSERT INTO processing_jobs (id, type, target_id, status, attempts, max_attempts, idempotency_key,
        correlation_id, requested_by, created_at, updated_at)
      VALUES (?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(idempotency_key) DO UPDATE SET status='queued', attempts=0, error=NULL, updated_at=excluded.updated_at`,
+     ON CONFLICT(idempotency_key) DO UPDATE SET status='queued', attempts=0, error=NULL,
+       next_attempt_at=NULL, updated_at=excluded.updated_at`,
   ).run(id, j.type, j.targetId, config.jobs.maxAttempts, j.idempotencyKey,
     j.correlationId ?? newId('cor'), j.requestedBy ?? null, t, t);
   return { jobId: existing?.id ?? id, deduplicated: false };
 }
 
 export async function runPendingJobs(db: DB): Promise<number> {
+  // next_attempt_at is when a failed job becomes runnable again; NULL is now.
   const jobs = db
-    .prepare("SELECT * FROM processing_jobs WHERE status = 'queued' ORDER BY created_at LIMIT 5")
-    .all() as JobRow[];
+    .prepare(
+      `SELECT * FROM processing_jobs
+        WHERE status = 'queued' AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+        ORDER BY created_at LIMIT 5`,
+    )
+    .all(now()) as JobRow[];
   for (const job of jobs) {
     await runJob(db, job);
   }
@@ -59,25 +73,49 @@ async function runJob(db: DB, job: JobRow) {
     set("status = 'dead_letter', error = ?", `No handler for job type ${job.type}`);
     return;
   }
-  set("status = 'processing', attempts = attempts + 1, progress = 10");
+  set("status = 'processing', attempts = attempts + 1, progress = 10, next_attempt_at = NULL");
   try {
     await h(db, job);
     set("status = 'completed', progress = 100, error = NULL");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const attempts = (db.prepare('SELECT attempts, max_attempts FROM processing_jobs WHERE id = ?').get(job.id) as any);
-    if (attempts.attempts >= attempts.max_attempts) {
+    // A dependency being down is not this job's fault and says nothing about
+    // whether the work can succeed, so it is given a longer rope and a longer
+    // wait: retrying a restarting OCR service every 400ms only spends the budget
+    // without ever giving it a chance to answer.
+    const transient = isTransient(err);
+    const { attempts, max_attempts: max } = db
+      .prepare('SELECT attempts, max_attempts FROM processing_jobs WHERE id = ?')
+      .get(job.id) as { attempts: number; max_attempts: number };
+    const limit = transient ? Math.max(max, config.jobs.transientMaxAttempts) : max;
+
+    if (attempts >= limit) {
       set("status = 'dead_letter', error = ?", message);
       recordAudit(db, {
         actorLabel: 'system', action: 'processing.job_dead_letter', objectType: 'processing_job',
-        objectId: job.id, after: { type: job.type, error: message }, outcome: 'failure',
+        objectId: job.id, after: { type: job.type, error: message, transient }, outcome: 'failure',
         correlationId: job.correlation_id,
       });
     } else {
-      set("status = 'queued', error = ?", message); // simple retry; backoff via poll interval
+      const waitMs = backoffFor(attempts, transient);
+      set(
+        "status = 'queued', error = ?, next_attempt_at = ?",
+        message, new Date(Date.now() + waitMs).toISOString(),
+      );
+      logger.warn('job retry scheduled', {
+        jobId: job.id, type: job.type, attempt: attempts, of: limit, transient, waitMs,
+      });
     }
-    logger.error('job failed', { jobId: job.id, type: job.type, error: message });
+    logger.error('job failed', { jobId: job.id, type: job.type, transient, error: message });
   }
+}
+
+// Exponential, doubling per attempt, capped. Exported so the schedule can be
+// asserted rather than inferred from wall-clock timing in a test.
+export function backoffFor(attempts: number, transient: boolean): number {
+  const base = transient ? config.jobs.transientBackoffMs : config.jobs.backoffMs;
+  const cap = transient ? config.jobs.transientBackoffCapMs : config.jobs.backoffCapMs;
+  return Math.min(base * 2 ** Math.max(0, attempts - 1), cap);
 }
 
 // Jobs the last process died holding. One worker runs at a time and it marks a job

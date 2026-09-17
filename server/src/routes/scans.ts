@@ -239,18 +239,21 @@ scanRouter.post(
     idempotencyKey: `pe:${a.id}:${a.sha256}`,
     correlationId: req.correlationId, requestedBy: req.user!.id,
   }));
+  // A dead-lettered OCR job is re-queued by enqueueJob on its own, so re-analysing
+  // after the recogniser comes back does read the faces it missed. Those faces are
+  // new input the extractor never saw, so `force` has to redo extraction as well —
+  // otherwise the declarations would stay frozen at what two of five faces said.
+  const retryKey = req.body?.force ? `:retry:${Date.now()}` : '';
   jobs.push(enqueueJob(db, {
     type: 'extract_declarations', targetId: req.params.id,
-    idempotencyKey: `ex:${req.params.id}:${setHash}`,
+    idempotencyKey: `ex:${req.params.id}:${setHash}${retryKey}`,
     correlationId: req.correlationId, requestedBy: req.user!.id,
   }));
   // That same deduplication would make "Retry analysis" a silent no-op after the
   // judge job completed with an error verdict — the evidence set has not changed,
   // so the key matches an already-completed job. `force` mints a fresh key, and is
   // scoped to the judge alone: OCR of unchanged images does not need redoing.
-  const judgeKey = req.body?.force
-    ? `jc:${req.params.id}:${setHash}:retry:${Date.now()}`
-    : `jc:${req.params.id}:${setHash}`;
+  const judgeKey = `jc:${req.params.id}:${setHash}${retryKey}`;
   jobs.push(enqueueJob(db, {
     type: 'judge_compliance', targetId: req.params.id,
     idempotencyKey: judgeKey,
@@ -279,6 +282,16 @@ scanRouter.get('/scans/:id', requireAuth, requirePerm('inspection.read'), (req, 
      WHERE target_id = ? OR target_id IN (SELECT id FROM evidence_assets WHERE inspection_id = ?)`,
   ).all(req.params.id, req.params.id) as any[];
 
+  // Which faces the recogniser actually got through. An image the officer took and
+  // the system never read is not the same as one read and found bare, and until now
+  // only the judge was told the difference - the officer saw a finished verdict with
+  // no sign that a third of their photographs had been skipped.
+  const ocrDone = new Set((db.prepare(
+    `SELECT target_id FROM processing_jobs
+      WHERE type = 'process_evidence' AND status = 'completed'
+        AND target_id IN (SELECT id FROM evidence_assets WHERE inspection_id = ?)`,
+  ).all(req.params.id) as any[]).map((r) => r.target_id));
+
   const failed = jobs.filter((j) => j.status === 'dead_letter');
   const pending = jobs.filter((j) => j.status === 'queued' || j.status === 'processing');
   // Work in flight wins over an existing verdict: after a retry the previous
@@ -303,6 +316,7 @@ scanRouter.get('/scans/:id', requireAuth, requirePerm('inspection.read'), (req, 
     images: images.map((a: any) => ({
       id: a.id, side: a.faceLabel, name: a.originalName, sha256: a.sha256,
       sizeBytes: a.sizeBytes, capturedAt: a.capturedAt, source: a.source,
+      read: ocrDone.has(a.id),
     })),
     progress: {
       total: jobs.length,
