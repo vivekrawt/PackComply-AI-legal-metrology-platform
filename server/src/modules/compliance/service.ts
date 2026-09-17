@@ -20,26 +20,85 @@ import { loadRulesCorpus } from './rulesContext.js';
 // determination turns on.
 
 export function collectOcrText(db: DB, inspectionId: string) {
+  // The OCR job's own outcome for each face travels with the text. A face the
+  // recogniser read and found bare yields the same empty string as a face it never
+  // reached because the service was down, and only the job row separates them.
+  // Collapsed into one, an outage is indistinguishable from a missing declaration.
   const assets = db.prepare(
-    `SELECT id, face_label FROM evidence_assets
-     WHERE inspection_id = ? AND deleted_at IS NULL ORDER BY created_at`,
+    `SELECT a.id, a.face_label,
+            (SELECT j.status FROM processing_jobs j
+              WHERE j.target_id = a.id AND j.type = 'process_evidence'
+              ORDER BY j.created_at DESC LIMIT 1) AS ocr_job
+       FROM evidence_assets a
+      WHERE a.inspection_id = ? AND a.deleted_at IS NULL ORDER BY a.created_at`,
   ).all(inspectionId) as any[];
 
-  const faces: { faceLabel: string | null; text: string }[] = [];
+  const faces: { faceLabel: string | null; text: string; read: boolean }[] = [];
   for (const a of assets) {
     const blocks = db.prepare(
       'SELECT text FROM ocr_blocks WHERE asset_id = ? ORDER BY reading_order',
     ).all(a.id) as any[];
     faces.push({
       faceLabel: a.face_label,
+      read: a.ocr_job === 'completed',
       text: blocks.map((b) => b.text).join('\n').trim(),
     });
   }
   const ocrText = faces
-    .map((f) => `[${f.faceLabel ?? 'unlabelled'}]\n${f.text}`)
+    .map((f) => (f.read
+      ? `[${f.faceLabel ?? 'unlabelled'}]\n${f.text}`
+      : `[${f.faceLabel ?? 'unlabelled'} — NOT READ: the recogniser never ran on this face]`))
     .join('\n\n')
     .trim();
   return { faces, ocrText };
+}
+
+// The same guard the prompt asks the model for, enforced rather than requested.
+//
+// A declaration cannot be shown to be absent from a package that was only partly
+// examined: it may be printed on a face nothing ever read. The model is told which
+// faces those are and instructed to answer 'unclear', but a finding of
+// non-compliance against a label nobody finished reading is not a thing to leave to
+// instruction-following. Only findings of ABSENCE are withheld - a declaration that
+// was read and is itself defective stands, because unread faces cannot excuse it.
+//
+// Nothing is hidden: what the model actually returned stays on the row in raw_json,
+// and the summary says plainly that the determination was held back and why.
+export function withholdAbsenceOnUnreadFaces(
+  verdict: ComplianceVerdict,
+  faces: { faceLabel: string | null; read: boolean }[],
+): ComplianceVerdict {
+  const unread = faces.filter((f) => !f.read).map((f) => f.faceLabel ?? 'unlabelled');
+  if (unread.length === 0 || faces.length === 0) return verdict;
+
+  const names = unread.join(', ');
+  const plural = unread.length > 1;
+  let withheld = 0;
+  const checks = verdict.checks.map((c) => {
+    if (c.status !== 'missing') return c;
+    withheld += 1;
+    return {
+      ...c,
+      status: 'unclear' as const,
+      issue: `${c.issue} (Recorded as unclear rather than missing: the ${names} `
+        + `${plural ? 'faces were' : 'face was'} photographed but never read, so this `
+        + `declaration may be printed there.)`.trim(),
+    };
+  });
+
+  // "Reading confidence" is how well the label was read, so it cannot survive
+  // untouched when part of the label was not read at all. Scaling by the share of
+  // faces actually read keeps the number the model's own, told honestly.
+  const readShare = faces.filter((f) => f.read).length / faces.length;
+  return {
+    ...verdict,
+    checks,
+    confidence: Math.round(verdict.confidence * readShare * 100) / 100,
+    overall: withheld > 0 && verdict.overall === 'non_compliant' ? 'needs_review' : verdict.overall,
+    summary: `${unread.length} of ${faces.length} photographed `
+      + `${faces.length > 1 ? 'faces' : 'face'} (${names}) could not be read, so nothing can be `
+      + `shown to be absent from this package. ${verdict.summary}`,
+  };
 }
 
 export async function judgeCompliance(
@@ -86,6 +145,8 @@ export async function judgeCompliance(
       checks: [],
     };
   }
+
+  verdict = withholdAbsenceOnUnreadFaces(verdict, faces);
 
   const id = newId('cv');
   const t = now();

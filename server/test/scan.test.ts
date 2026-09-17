@@ -9,6 +9,7 @@ import { drainJobs, reclaimStaleJobs } from '../src/modules/processing/queue.js'
 import { sha256Hex } from '../src/core/crypto.js';
 import { loadRulesCorpus } from '../src/modules/compliance/rulesContext.js';
 import { loadScanImages, requireScanReport, scanReportPdf } from '../src/modules/compliance/scanReport.js';
+import { withholdAbsenceOnUnreadFaces } from '../src/modules/compliance/service.js';
 
 // Field-officer scan flow. The compliance judge is pinned to 'rule_engine' by
 // test/setup.ts, so nothing here makes a live API call; what is exercised is the
@@ -214,6 +215,71 @@ describe('capture rules', () => {
 // counts it as pending - which outranks an existing verdict. One orphaned row is
 // enough to report 'analyzing' for the life of a scan whose verdict was written
 // minutes earlier and is sitting in the database unread.
+// An OCR outage must never be reported as a legal violation.
+//
+// Drawn from a real scan: five faces photographed, the OCR sidecar died after two,
+// and the judge - shown the other three as simply carrying no text - returned
+// "non_compliant, 0.95 confident, net quantity and manufacturer details missing".
+// The face it never read held the ingredients and nutrition panel.
+describe('absence withheld while a face is unread', () => {
+  const check = (parameter: string, status: 'present' | 'missing' | 'unclear') => ({
+    parameter, ruleReference: 'Rule 6(1)(c)', status, observedText: '', issue: 'Not found.', remedy: 'Declare it.',
+  });
+  const verdict = (overall: any, checks: any[], confidence = 0.95) => ({
+    provider: 'gemini', modelVersion: 'test', isMock: false,
+    overall, summary: 'Mandatory declarations absent.', confidence, checks,
+  });
+  const chings = [
+    { faceLabel: 'front', read: true },
+    { faceLabel: 'back', read: true },
+    { faceLabel: 'top', read: false },
+    { faceLabel: 'bottom', read: false },
+    { faceLabel: 'left', read: false },
+  ];
+
+  it('turns missing into unclear and non_compliant into needs_review', () => {
+    const out = withholdAbsenceOnUnreadFaces(
+      verdict('non_compliant', [check('Net quantity', 'missing'), check('Manufacturer', 'missing')]),
+      chings,
+    );
+    expect(out.overall).toBe('needs_review');
+    expect(out.checks.every((c) => c.status === 'unclear')).toBe(true);
+    expect(out.checks[0].issue).toMatch(/never read/);
+    expect(out.summary).toMatch(/^3 of 5 photographed faces \(top, bottom, left\) could not be read/);
+    // "Reading confidence" cannot stay at 0.95 when three fifths of the label was
+    // never read: it is scaled by the share that was.
+    expect(out.confidence).toBe(0.38);
+  });
+
+  it('leaves a defect that was actually read standing', () => {
+    // Non-compliance resting on something observed, not on an absence, survives:
+    // an unread face cannot excuse a declaration that was read and is wrong.
+    const out = withholdAbsenceOnUnreadFaces(
+      verdict('non_compliant', [{ ...check('Net quantity', 'present'), issue: 'Printed smaller than Rule 9 allows.' }]),
+      chings,
+    );
+    expect(out.overall).toBe('non_compliant');
+    expect(out.checks[0].status).toBe('present');
+  });
+
+  it('changes nothing when every face was read', () => {
+    const all = [{ faceLabel: 'front', read: true }, { faceLabel: 'back', read: true }];
+    const given = verdict('non_compliant', [check('Net quantity', 'missing')]);
+    const out = withholdAbsenceOnUnreadFaces(given, all);
+    expect(out).toEqual(given);
+    expect(out.overall).toBe('non_compliant');
+    expect(out.confidence).toBe(0.95);
+  });
+
+  it('does not promote a compliant verdict, which unread faces cannot undermine', () => {
+    // Every mandatory declaration found on the faces that were read is still found,
+    // whatever the unread ones say - so the outcome stands, with the caveat added.
+    const out = withholdAbsenceOnUnreadFaces(verdict('compliant', [check('Net quantity', 'present')]), chings);
+    expect(out.overall).toBe('compliant');
+    expect(out.summary).toMatch(/could not be read/);
+  });
+});
+
 describe('jobs interrupted by a dying worker', () => {
   const ocrJobOf = (scan: string) => getDb().prepare(
     `SELECT id FROM processing_jobs

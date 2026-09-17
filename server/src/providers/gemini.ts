@@ -88,9 +88,16 @@ function buildUserPrompt(input: ComplianceJudgeInput): string {
     p?.packSize ? `Declared pack size as recorded: ${p.packSize}` : null,
   ].filter(Boolean);
 
+  // A face nobody read must never present as a face with nothing on it. Told only
+  // "no text", the model reasonably concludes the panel is bare and reports the
+  // declarations it carries as absent - which turns an OCR outage into a finding of
+  // non-compliance against a package whose label was never examined.
+  const unread = input.faces.filter((f) => !f.read);
   const faces = input.faces.length
     ? input.faces
-        .map((f) => `--- FACE: ${f.faceLabel ?? 'unlabelled'} ---\n${f.text.trim() || '(no text recovered from this face)'}`)
+        .map((f) => (f.read
+          ? `--- FACE: ${f.faceLabel ?? 'unlabelled'} ---\n${f.text.trim() || '(this face was read; no text was found on it)'}`
+          : `--- FACE: ${f.faceLabel ?? 'unlabelled'} — NOT READ ---\n(the text recogniser did not run on this image. Its contents are UNKNOWN: this face may carry any declaration.)`))
         .join('\n\n')
     : '(no OCR text was recovered from any face)';
 
@@ -106,6 +113,12 @@ OFFICER-RECORDED CONTEXT
 ${context.length ? context.join('\n') : '(none recorded)'}
 
 FACES PHOTOGRAPHED: ${input.faces.length ? input.faces.map((f) => f.faceLabel ?? 'unlabelled').join(', ') : 'none'}
+${unread.length ? `FACES NOT READ: ${unread.map((f) => f.faceLabel ?? 'unlabelled').join(', ')}
+These faces were photographed but the recogniser never ran on them, so what they say is
+unknown. A declaration you cannot find may be printed on one of them. You may NOT report
+any declaration as "missing" while a face remains unread - use "unclear" instead, and make
+"overall" "needs_review" rather than "non_compliant" unless a declaration you can actually
+read is itself defective.` : 'FACES NOT READ: none - every photographed face was read.'}
 
 OCR TEXT RECOVERED FROM THE PACKAGE
 ${faces}
