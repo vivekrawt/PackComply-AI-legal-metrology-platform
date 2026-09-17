@@ -15,7 +15,7 @@ const RULES: RulesCorpus = {
 const INPUT: ComplianceJudgeInput = {
   eventDate: '2026-09-04',
   ocrText: '[top]\nNet Quantity: 150 g',
-  faces: [{ faceLabel: 'top', text: 'Net Quantity: 150 g' }],
+  faces: [{ faceLabel: 'top', text: 'Net Quantity: 150 g', read: true }],
   engineFindings: [],
 };
 
@@ -63,6 +63,48 @@ describe('Gemini compliance judge', () => {
     expect(body.systemInstruction.parts[0].text).toContain(RULES.text);
     expect(body.generationConfig.responseMimeType).toBe('application/json');
     expect(body.contents[0].parts[0].text).toContain('Net Quantity: 150 g');
+  });
+
+  it('tells the model which faces nobody read, and forbids calling anything missing', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(verdictReply({
+      overall: 'compliant', summary: 'ok', confidence: 0.5, checks: [],
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    // Exactly the Ching's Secret shape: two faces read, three photographed and
+    // never reached because the OCR service had died.
+    await withKey(async () => {
+      await new GeminiComplianceProvider().judge({
+        ...INPUT,
+        faces: [
+          { faceLabel: 'front', text: 'Schezwan Chutney', read: true },
+          { faceLabel: 'back', text: 'Ingredients: ...', read: true },
+          { faceLabel: 'top', text: '', read: false },
+          { faceLabel: 'bottom', text: '', read: false },
+          { faceLabel: 'left', text: '', read: false },
+        ],
+      }, RULES);
+    });
+
+    const prompt = JSON.parse(fetchMock.mock.calls[0][1].body).contents[0].parts[0].text;
+    expect(prompt).toContain('FACES NOT READ: top, bottom, left');
+    expect(prompt).toMatch(/NOT report[\s\S]*"missing"/);
+    // The unread faces must not read as bare panels, which is what turned an
+    // outage into a finding of non-compliance.
+    expect(prompt).toContain('Its contents are UNKNOWN');
+    expect(prompt).not.toContain('(no text recovered from this face)');
+  });
+
+  it('says so explicitly when every photographed face was read', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(verdictReply({
+      overall: 'compliant', summary: 'ok', confidence: 0.5, checks: [],
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    await withKey(async () => { await new GeminiComplianceProvider().judge(INPUT, RULES); });
+
+    const prompt = JSON.parse(fetchMock.mock.calls[0][1].body).contents[0].parts[0].text;
+    expect(prompt).toContain('FACES NOT READ: none');
+    expect(prompt).not.toMatch(/NOT report/);
   });
 
   it('normalises filler values so a satisfied check renders clean', async () => {

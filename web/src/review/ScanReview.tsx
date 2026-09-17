@@ -111,6 +111,22 @@ export function ScanReview() {
                   send the scan back for re-capture instead.
                 </p>
               )}
+              {/* The reviewer's signature is the regulatory act, so they of all people
+                  must not sign off on a package the system only partly read. */}
+              {scan.images.some((i) => !i.read) && (
+                <p className="warn-box" role="alert">
+                  <b>
+                    {scan.images.filter((i) => !i.read).length} of {scan.images.length} images were
+                    never read.
+                  </b>{' '}
+                  The {scan.images.filter((i) => !i.read)
+                    .map((i) => (SIDE_LABELS[i.side ?? ''] ?? i.side ?? 'unlabelled').toLowerCase())
+                    .join(', ')} face(s) were photographed but the text recogniser never ran on them.
+                  This assessment was made without them, so nothing in it establishes that a
+                  declaration is absent from the package. Send it back to be read again rather than
+                  deciding on it.
+                </p>
+              )}
               {v.isMock && !v.error && (
                 <p className="warn-box">
                   <b>No AI assessment was performed.</b> {v.summary}

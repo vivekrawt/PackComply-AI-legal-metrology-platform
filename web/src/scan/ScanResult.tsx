@@ -126,6 +126,21 @@ export function ScanResult() {
   const missing = v.checks.filter((c) => c.status === 'missing');
   const unclear = v.checks.filter((c) => c.status === 'unclear');
   const product = scan.product?.brand || scan.product?.genericName || 'Scanned product';
+  // Faces the officer photographed that the recogniser never read. The assessment
+  // above was made without them, and saying so is not a detail: a verdict drawn
+  // from three of five faces is a different thing from a verdict on the package.
+  const unread = scan.images.filter((i) => !i.read);
+  // "Needs review" is the verdict for evidence that did not settle the question, and
+  // an obstacle on the way - a recogniser that was down, a model call that failed -
+  // lands here looking exactly like a genuinely unclear label. The officer is the
+  // only one who can tell the difference, by running it again now that whatever was
+  // broken may not be. Offered only while the case is still theirs: once an
+  // administrator has decided it, re-running only marks that decision stale.
+  const decidedReview = scan.review && !scan.review.stale ? scan.review : null;
+  const settled = decidedReview?.decision === 'accepted' || decidedReview?.decision === 'rejected';
+  // When faces went unread, the banner below already says so and offers the same
+  // action with the better explanation, so this would only repeat it.
+  const offerRecheck = v.overall === 'needs_review' && unread.length === 0 && !settled;
   const openViewer = (at: number, check?: ComplianceCheck) => setViewer({ at, check });
 
   return (
@@ -144,6 +159,40 @@ export function ScanResult() {
         {product} · scanned {new Date(scan.createdAt).toLocaleString()} · {scan.images.length} image
         {scan.images.length === 1 ? '' : 's'}
       </p>
+
+      {offerRecheck && (
+        <div className="warn-box unread-faces">
+          <b>Not a conclusion about the package.</b>{' '}
+          The check did not settle the question — that can be the label itself, or it can be
+          something that went wrong on the way: a face the recogniser could not reach, or an
+          assessment that never came back. If you think the package is readable, run it again.
+          <button className="secondary" onClick={retry} disabled={retrying}>
+            {retrying ? 'Rechecking…' : 'Recheck this package'}
+          </button>
+        </div>
+      )}
+
+      {unread.length > 0 && (
+        <div className="warn-box unread-faces" role="alert">
+          <b>
+            {unread.length} of {scan.images.length} image{scan.images.length === 1 ? '' : 's'} could
+            not be read.
+          </b>{' '}
+          The {unread.map((i) => (SIDE_LABELS[i.side ?? ''] ?? i.side ?? 'unlabelled').toLowerCase())
+            .join(', ')} {unread.length === 1 ? 'face was' : 'faces were'} photographed, but the text
+          recogniser never ran on {unread.length === 1 ? 'it' : 'them'} — so this assessment was made
+          without whatever {unread.length === 1 ? 'it says' : 'they say'}. Nothing here can be taken
+          as absent from the package.
+          {scan.progress.errors.length > 0 && (
+            <ul className="unread-why">
+              {[...new Set(scan.progress.errors)].map((e, i) => <li key={i}>{e}</li>)}
+            </ul>
+          )}
+          <button className="secondary" onClick={retry} disabled={retrying}>
+            {retrying ? 'Re-analysing…' : 'Read them and analyse again'}
+          </button>
+        </div>
+      )}
 
       {v.isMock && (
         <p className="warn-box">

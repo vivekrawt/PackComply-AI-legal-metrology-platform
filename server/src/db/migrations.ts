@@ -581,4 +581,18 @@ UPDATE products
                   AND d.decl_type = 'product_name');
 `,
   },
+  {
+    // When a job may next be tried. Until now a failed job went straight back to
+    // 'queued' and was picked up on the next 400ms poll, so three attempts at a
+    // dependency that was down were spent inside a few seconds - and a scan lost a
+    // face of a package because the OCR sidecar happened to be restarting.
+    //
+    // NULL means runnable now, which is what every existing row is.
+    id: '011_job_backoff',
+    sql: `
+ALTER TABLE processing_jobs ADD COLUMN next_attempt_at TEXT;
+
+CREATE INDEX idx_jobs_runnable ON processing_jobs(status, next_attempt_at);
+`,
+  },
 ];

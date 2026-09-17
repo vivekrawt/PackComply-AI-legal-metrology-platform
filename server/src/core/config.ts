@@ -98,6 +98,17 @@ export const config = {
   jobs: {
     pollMs: Number(process.env.JOB_POLL_MS ?? 400),
     maxAttempts: Number(process.env.JOB_MAX_ATTEMPTS ?? 3),
+    // Wait between attempts, doubling each time up to the cap. A job that failed
+    // on its own merits is retried briskly, because waiting changes nothing.
+    backoffMs: Number(process.env.JOB_BACKOFF_MS ?? 1_000),
+    backoffCapMs: Number(process.env.JOB_BACKOFF_CAP_MS ?? 30_000),
+    // A dependency being down is different. PaddleOCR needs tens of seconds just
+    // to load its models, so retrying four hundred milliseconds later only spends
+    // the budget without ever giving it a chance to answer. These numbers are set
+    // to outlast a sidecar restart: 15s, 30s, 60s, 60s... across eight attempts.
+    transientBackoffMs: Number(process.env.JOB_TRANSIENT_BACKOFF_MS ?? 15_000),
+    transientBackoffCapMs: Number(process.env.JOB_TRANSIENT_BACKOFF_CAP_MS ?? 60_000),
+    transientMaxAttempts: Number(process.env.JOB_TRANSIENT_MAX_ATTEMPTS ?? 8),
   },
   rateLimit: {
     windowMs: 60_000,

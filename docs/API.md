@@ -30,10 +30,11 @@ casework.
 | Method | Path | Notes |
 |---|---|---|
 | POST | /auth/signup | `{email, name, password, organizationName?}` → creates a **`user`** account in its own organization and signs it in. Role is never taken from the request. |
-| GET | /scans/capability | sides to request, image floor, judge provider/model/`isMock`, statutory-corpus availability + SHA-256 |
+| GET | /scans/capability | `sides` to lay out on arrival + `extraSides` to offer as they fill, image floor (`minImages`) and ceiling (`maxImages`), judge provider/model/`isMock`, statutory-corpus availability + SHA-256 |
 | POST | /scans | create a scan `{product?, location?}` → `{scanId}` |
 | PUT | /scans/:id/product | brand / generic name / category / pack size / import status |
-| POST | /scans/:id/images | multipart `file` + `side` (`top`\|`bottom`\|`left`\|`right`\|`front`\|`back`\|`closeup`\|`other`) + `source`. One face per request. Exact duplicate bytes are refused. |
+| POST | /scans/:id/images | multipart `file` + `side` (`front`\|`back`\|`top`\|`bottom`\|`left`\|`right`\|`closeup`\|`other`) + `source`. One face per request. A second image for a face already captured **replaces** it — the old one is soft-deleted, so a retake is not sent to OCR alongside the shot that superseded it. Exact duplicate bytes are refused. **409** past `maxImages` (8) distinct faces. |
+| DELETE | /scans/:id/images/:assetId | the capturing auditor discards one of their own images. Soft delete — the SHA-256 stays on the row — and the freed face can be photographed again. |
 | POST | /scans/:id/analyze | `{force?}` → 202. Queues OCR → declaration extraction → rule evaluation → AI compliance judge. **422** below two images. `force` re-queues only the judge, so a retry after a service outage is not deduplicated into a no-op. |
 | GET | /scans/:id | poll target: `status` (`capturing`\|`analyzing`\|`ready`\|`failed`), progress, images, `verdict`, `engineFindings`, `ruleVersions` |
 | GET | /scans | scan history for the signed-in officer (scope-enforced) |

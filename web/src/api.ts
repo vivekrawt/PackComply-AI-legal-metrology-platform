@@ -151,6 +151,10 @@ export interface Verdict {
 export interface ScanImage {
   id: string; side: string | null; name: string | null; sha256: string;
   sizeBytes: number | null; capturedAt: string | null; source: string | null;
+  // Whether the recogniser actually read this face. An image nobody read is not an
+  // image with nothing on it, and a verdict drawn from the rest has a hole in it
+  // that the officer has to be able to see.
+  read: boolean;
 }
 
 // Per-image OCR boxes for the evidence viewer. `processed` distinguishes an image
@@ -215,7 +219,8 @@ export const REVIEW_META: Record<ReviewDecision, {
 
 export interface Scan {
   scanId: string; status: ScanStatus; createdAt: string; eventDate: string;
-  product: Record<string, any> | null; location: string | null; minImages: number;
+  product: Record<string, any> | null; location: string | null;
+  minImages: number; maxImages: number;
   images: ScanImage[];
   progress: { total: number; done: number; pending: number; errors: string[] };
   verdict: Verdict | null;
@@ -242,7 +247,7 @@ export interface ScanSummary {
 }
 
 export interface ScanCapability {
-  minImages: number; sides: string[]; extraSides: string[];
+  minImages: number; maxImages: number; sides: string[]; extraSides: string[];
   judge: { provider: string; modelVersion: string; isMock: boolean };
   rules: { available: boolean; sources: string[]; sha256: string };
 }

@@ -108,7 +108,11 @@ export interface RulesCorpus {
 export interface ComplianceJudgeInput {
   eventDate: string;
   ocrText: string;                                        // exactly what is sent
-  faces: { faceLabel: string | null; text: string }[];
+  // `read` is whether the recogniser actually ran on this face. A face it read and
+  // found bare and a face nothing ever looked at both arrive as empty text, and the
+  // difference between them is the difference between a missing declaration and an
+  // unexamined one - which is the whole determination.
+  faces: { faceLabel: string | null; text: string; read: boolean }[];
   productContext?: {
     brand?: string | null; genericName?: string | null; category?: string | null;
     importStatus?: string | null; packSize?: string | null;
