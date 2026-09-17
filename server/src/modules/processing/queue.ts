@@ -13,11 +13,30 @@ export type JobHandler = (db: DB, job: JobRow) => Promise<void>;
 export interface JobRow {
   id: string; type: string; target_id: string; status: string; attempts: number;
   max_attempts: number; idempotency_key: string; correlation_id: string;
+  created_at: string;
+}
+
+// A job may depend on other jobs having settled first. Enqueue order used to be
+// enough - the OCR jobs were created before the judge and ran in creation order -
+// but a job that can be rescheduled can be overtaken, and a judge that overtakes
+// the OCR it is supposed to read assesses a package nobody has read yet.
+//
+// `ready` is asked before the job is marked 'processing'. Returning a reason defers
+// it without spending an attempt: the work has not failed, it is simply not due.
+export interface HandlerOptions {
+  ready?: (db: DB, job: JobRow) => string | null;
+  // How long to wait before asking again, and how long to keep asking. The ceiling
+  // matters: whatever it is waiting for may never settle, and a verdict that is
+  // late is better than a scan that is never assessed at all.
+  deferMs?: number;
+  maxDeferMs?: number;
 }
 
 const handlers = new Map<string, JobHandler>();
-export function registerHandler(type: string, h: JobHandler) {
+const handlerOptions = new Map<string, HandlerOptions>();
+export function registerHandler(type: string, h: JobHandler, opts?: HandlerOptions) {
   handlers.set(type, h);
+  if (opts) handlerOptions.set(type, opts);
 }
 
 export function enqueueJob(
@@ -73,6 +92,25 @@ async function runJob(db: DB, job: JobRow) {
     set("status = 'dead_letter', error = ?", `No handler for job type ${job.type}`);
     return;
   }
+  const opts = handlerOptions.get(job.type);
+  const waitingFor = opts?.ready?.(db, job) ?? null;
+  if (waitingFor) {
+    const age = Date.now() - Date.parse(job.created_at);
+    const ceiling = opts?.maxDeferMs ?? 20 * 60_000;
+    if (age < ceiling) {
+      // Not an attempt: nothing was tried, so nothing is spent.
+      set(
+        "status = 'queued', error = ?, next_attempt_at = ?",
+        `Waiting: ${waitingFor}`,
+        new Date(Date.now() + (opts?.deferMs ?? 3_000)).toISOString(),
+      );
+      return;
+    }
+    logger.warn('job waited long enough; running anyway', {
+      jobId: job.id, type: job.type, waitingFor, waitedMs: age,
+    });
+  }
+
   set("status = 'processing', attempts = attempts + 1, progress = 10, next_attempt_at = NULL");
   try {
     await h(db, job);

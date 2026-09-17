@@ -226,6 +226,82 @@ describe('capture rules', () => {
 // the image's retry budget. The Ching's Secret scan burned three attempts in about
 // forty seconds against an OCR sidecar that needs tens of seconds just to load its
 // models, and three faces of a package were dead-lettered for it.
+// The judge must not overtake the OCR it is supposed to read.
+//
+// From a real scan: six faces, the recogniser down, every OCR job correctly waiting
+// out its backoff - and the judge, which had no reason to wait, ran 50 seconds in
+// and wrote "6 of 6 faces could not be read". The faces were all read four minutes
+// later, perfectly, with nobody left to tell. Enqueue order had been doing this job,
+// and enqueue order stops being execution order the moment a job can be rescheduled.
+describe('the judge waits for the faces to be read', () => {
+  it('defers instead of assessing a package whose text has not arrived', async () => {
+    const db = getDb();
+    const scan = (await officer.post('/api/v1/scans').set(H).send({ product: { brand: 'Overtake' } })).body.scanId;
+    for (const side of ['front', 'back']) {
+      await officer.post(`/api/v1/scans/${scan}/images`).set(H)
+        .attach('file', png(`overtake-${side}`), { filename: `${side}.png`, contentType: 'image/png' })
+        .field('side', side);
+    }
+    await officer.post(`/api/v1/scans/${scan}/analyze`).set(H);
+
+    // One face is still being read - exactly the state a transient OCR failure
+    // leaves behind while it waits out its backoff.
+    const held = db.prepare(
+      `SELECT id FROM processing_jobs WHERE type = 'process_evidence'
+         AND target_id IN (SELECT id FROM evidence_assets WHERE inspection_id = ?) LIMIT 1`,
+    ).get(scan) as { id: string };
+    db.prepare("UPDATE processing_jobs SET status = 'queued', next_attempt_at = ? WHERE id = ?")
+      .run(new Date(Date.now() + 60_000).toISOString(), held.id);
+
+    await drainJobs(db);
+
+    const judge = db.prepare(
+      "SELECT status, attempts, error FROM processing_jobs WHERE type = 'judge_compliance' AND target_id = ?",
+    ).get(scan) as any;
+    expect(judge.status).toBe('queued');
+    expect(judge.error).toMatch(/still being read/);
+    // Deferring is not attempting: waiting must not spend the retry budget.
+    expect(judge.attempts).toBe(0);
+    // And no verdict was written about a package nobody had finished reading.
+    expect((await officer.get(`/api/v1/scans/${scan}`).set(H)).body.verdict).toBeNull();
+
+    // Once the face is read the judge runs and the scan completes normally. Both
+    // waits are released here: the OCR job's backoff, and the three seconds the
+    // judge had scheduled itself to ask again after.
+    db.prepare("UPDATE processing_jobs SET next_attempt_at = NULL WHERE id = ?").run(held.id);
+    await drainJobs(db);
+    db.prepare(
+      `UPDATE processing_jobs SET next_attempt_at = NULL
+        WHERE target_id = ? AND status = 'queued'`,
+    ).run(scan);
+    await drainJobs(db);
+    const done = await officer.get(`/api/v1/scans/${scan}`).set(H);
+    expect(done.body.status).toBe('ready');
+    expect(done.body.verdict).toBeTruthy();
+    expect(done.body.verdict.summary).not.toMatch(/could not be read/);
+  });
+});
+
+// The recheck is the capturing auditor's, and theirs alone: `evaluation.run` keeps
+// both review roles out, and ownership keeps other auditors out.
+describe('who may re-run an analysis', () => {
+  it('refuses another auditor, and allows the one who captured it', async () => {
+    const scan = (await officer.post('/api/v1/scans').set(H).send({ product: { brand: 'Mine' } })).body.scanId;
+    await officer.post(`/api/v1/scans/${scan}/images`).set(H)
+      .attach('file', png('mine-front'), { filename: 'front.png', contentType: 'image/png' })
+      .field('side', 'front');
+    await officer.post(`/api/v1/scans/${scan}/analyze`).set(H);
+    await drainJobs(getDb());
+
+    const other = (await signup('recheck-other@packcomply.test', 'Other Auditor')).agent;
+    const denied = await other.post(`/api/v1/scans/${scan}/analyze`).set(H).send({ force: true });
+    expect(denied.status).toBeGreaterThanOrEqual(403);
+
+    const mine = await officer.post(`/api/v1/scans/${scan}/analyze`).set(H).send({ force: true });
+    expect(mine.status).toBe(202);
+  });
+});
+
 describe('backoff for a dependency that is down', () => {
   it('waits far longer for a transient failure than a real one', () => {
     // A job that failed on its own merits is retried briskly - waiting changes

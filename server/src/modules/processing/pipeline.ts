@@ -212,7 +212,29 @@ async function extractDeclarations(db: DB, job: JobRow) {
   });
 }
 
+// Both the declaration extractor and the compliance judge read what OCR produced,
+// so neither may run while a face is still being read.
+//
+// This used to be left to enqueue order - the OCR jobs are created first, and jobs
+// run in creation order - which held only while an OCR job either succeeded or
+// failed for good within seconds. Once a job that hits a service outage is properly
+// rescheduled minutes out, the judge overtakes it and assesses a package nobody has
+// read: six faces recognised perfectly, and a verdict of "needs review, no text was
+// recovered" written four minutes before the text arrived.
+export function facesStillBeingRead(db: DB, inspectionId: string): string | null {
+  const { n } = db.prepare(
+    `SELECT COUNT(*) AS n FROM processing_jobs
+      WHERE type = 'process_evidence'
+        AND status IN ('queued', 'processing')
+        AND target_id IN (SELECT id FROM evidence_assets
+                           WHERE inspection_id = ? AND deleted_at IS NULL)`,
+  ).get(inspectionId) as { n: number };
+  return n > 0 ? `${n} package ${n === 1 ? 'face is' : 'faces are'} still being read` : null;
+}
+
+const afterOcr = { ready: (db: DB, job: JobRow) => facesStillBeingRead(db, job.target_id) };
+
 export function registerPipelineHandlers() {
   registerHandler('process_evidence', processEvidence);
-  registerHandler('extract_declarations', extractDeclarations);
+  registerHandler('extract_declarations', extractDeclarations, afterOcr);
 }

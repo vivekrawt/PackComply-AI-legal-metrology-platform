@@ -1,12 +1,15 @@
 import type { DB } from '../../db/index.js';
 import { registerHandler, type JobRow } from '../processing/queue.js';
+import { facesStillBeingRead } from '../processing/pipeline.js';
 import { runEvaluation } from '../evaluation/service.js';
 import type { SessionUser } from '../auth/service.js';
 import { logger } from '../../core/logger.js';
 import { judgeCompliance } from './service.js';
 
-// The final job in the scan pipeline. It is enqueued after the per-image OCR jobs
-// and the declaration extraction job, so by the time it runs the OCR text exists.
+// The final job in the scan pipeline. It waits for every face to be read before it
+// runs - enqueue order alone does not hold that, because an OCR job that meets a
+// service outage is rescheduled and the judge would otherwise overtake it and
+// assess a package whose text had not arrived yet.
 //
 // Two assessments run here, in order and both retained:
 //   1. the deterministic rule engine, which produces the citation-backed findings
@@ -50,5 +53,7 @@ async function judgeComplianceJob(db: DB, job: JobRow) {
 }
 
 export function registerComplianceHandlers() {
-  registerHandler('judge_compliance', judgeComplianceJob);
+  registerHandler('judge_compliance', judgeComplianceJob, {
+    ready: (db, job) => facesStillBeingRead(db, job.target_id),
+  });
 }

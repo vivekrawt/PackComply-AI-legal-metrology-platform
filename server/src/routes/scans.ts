@@ -227,6 +227,23 @@ scanRouter.post(
   assertInScope(db, req.user!, req.params.id);
   assertScannable(db, req.params.id, MIN_SCAN_IMAGES);
 
+  // Re-running the analysis is the capturing auditor's to do, and theirs alone.
+  // `evaluation.run` already excludes both review roles - an authority that can
+  // re-run the check it later signs off is not a separation of duties - and this
+  // narrows it further to the officer whose package it is.
+  const owner = db.prepare('SELECT created_by FROM inspections WHERE id = ?')
+    .get(req.params.id) as { created_by: string } | undefined;
+  if (!owner) throw notFound('Scan not found');
+  if (owner.created_by !== req.user!.id) {
+    throw forbidden('Only the auditor who captured a scan can re-run its analysis');
+  }
+
+  // A re-check is deliberately NOT blocked once the scan has been submitted or
+  // decided. A verdict that replaces the one a decision was taken against marks
+  // that decision stale, visibly, in the queue and on the scan - which is the
+  // existing answer to "the reading moved on", and a better one than refusing the
+  // officer a re-check because someone else is holding their case.
+
   const assets = db.prepare(
     "SELECT id, sha256 FROM evidence_assets WHERE inspection_id = ? AND deleted_at IS NULL AND storage_key IS NOT NULL",
   ).all(req.params.id) as any[];

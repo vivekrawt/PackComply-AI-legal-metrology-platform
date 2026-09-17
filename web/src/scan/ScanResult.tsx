@@ -130,6 +130,17 @@ export function ScanResult() {
   // above was made without them, and saying so is not a detail: a verdict drawn
   // from three of five faces is a different thing from a verdict on the package.
   const unread = scan.images.filter((i) => !i.read);
+  // "Needs review" is the verdict for evidence that did not settle the question, and
+  // an obstacle on the way - a recogniser that was down, a model call that failed -
+  // lands here looking exactly like a genuinely unclear label. The officer is the
+  // only one who can tell the difference, by running it again now that whatever was
+  // broken may not be. Offered only while the case is still theirs: once an
+  // administrator has decided it, re-running only marks that decision stale.
+  const decidedReview = scan.review && !scan.review.stale ? scan.review : null;
+  const settled = decidedReview?.decision === 'accepted' || decidedReview?.decision === 'rejected';
+  // When faces went unread, the banner below already says so and offers the same
+  // action with the better explanation, so this would only repeat it.
+  const offerRecheck = v.overall === 'needs_review' && unread.length === 0 && !settled;
   const openViewer = (at: number, check?: ComplianceCheck) => setViewer({ at, check });
 
   return (
@@ -148,6 +159,18 @@ export function ScanResult() {
         {product} · scanned {new Date(scan.createdAt).toLocaleString()} · {scan.images.length} image
         {scan.images.length === 1 ? '' : 's'}
       </p>
+
+      {offerRecheck && (
+        <div className="warn-box unread-faces">
+          <b>Not a conclusion about the package.</b>{' '}
+          The check did not settle the question — that can be the label itself, or it can be
+          something that went wrong on the way: a face the recogniser could not reach, or an
+          assessment that never came back. If you think the package is readable, run it again.
+          <button className="secondary" onClick={retry} disabled={retrying}>
+            {retrying ? 'Rechecking…' : 'Recheck this package'}
+          </button>
+        </div>
+      )}
 
       {unread.length > 0 && (
         <div className="warn-box unread-faces" role="alert">
