@@ -80,9 +80,45 @@ async function runJob(db: DB, job: JobRow) {
   }
 }
 
+// Jobs the last process died holding. One worker runs at a time and it marks a job
+// 'processing' only while it is actually in the handler, so nothing can legitimately
+// be in that state at startup - every such row belongs to a process that is gone.
+// Left alone they are invisible forever: runPendingJobs only ever selects 'queued',
+// and a scan with one orphan reports 'analyzing' for the rest of its life even when
+// its verdict was written.
+//
+// The attempt is already spent, so it is not re-counted. A job whose handler kills
+// the process never reaches the catch in runJob, so it never dead-letters on its
+// own; checking the count here is what stops a poison image from crash-looping the
+// server on every boot.
+export function reclaimStaleJobs(db: DB): number {
+  const stale = db.prepare(
+    "SELECT id, type, target_id, attempts, max_attempts FROM processing_jobs WHERE status = 'processing'",
+  ).all() as Pick<JobRow, 'id' | 'type' | 'target_id' | 'attempts' | 'max_attempts'>[];
+  for (const job of stale) {
+    const spent = job.attempts >= job.max_attempts;
+    const error = `Interrupted: the worker process ended while this job was running (attempt ${job.attempts} of ${job.max_attempts})`;
+    db.prepare(
+      `UPDATE processing_jobs SET status = ?, error = ?, progress = 0, updated_at = ? WHERE id = ?`,
+    ).run(spent ? 'dead_letter' : 'queued', error, now(), job.id);
+    logger.warn('reclaimed interrupted job', {
+      jobId: job.id, type: job.type, targetId: job.target_id,
+      attempts: job.attempts, outcome: spent ? 'dead_letter' : 'requeued',
+    });
+    if (spent) {
+      recordAudit(db, {
+        actorLabel: 'system', action: 'processing.job_dead_letter', objectType: 'processing_job',
+        objectId: job.id, after: { type: job.type, error }, outcome: 'failure',
+      });
+    }
+  }
+  return stale.length;
+}
+
 let timer: ReturnType<typeof setInterval> | null = null;
 export function startWorker(db: DB) {
   if (timer) return;
+  reclaimStaleJobs(db);
   let busy = false;
   timer = setInterval(async () => {
     if (busy) return;

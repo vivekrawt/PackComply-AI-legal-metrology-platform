@@ -5,7 +5,7 @@ import { seed } from '../src/db/seed.js';
 import { createApp } from '../src/app.js';
 import { registerPipelineHandlers } from '../src/modules/processing/pipeline.js';
 import { registerComplianceHandlers } from '../src/modules/compliance/jobs.js';
-import { drainJobs } from '../src/modules/processing/queue.js';
+import { drainJobs, reclaimStaleJobs } from '../src/modules/processing/queue.js';
 import { sha256Hex } from '../src/core/crypto.js';
 import { loadRulesCorpus } from '../src/modules/compliance/rulesContext.js';
 import { loadScanImages, requireScanReport, scanReportPdf } from '../src/modules/compliance/scanReport.js';
@@ -206,6 +206,78 @@ describe('capture rules', () => {
       .field('side', 'diagonal');
     expect(res.status).toBe(400);
     expect(res.body.error.message).toMatch(/Unknown package side/);
+  });
+});
+
+// What a killed worker leaves behind. runPendingJobs only ever selects 'queued', so
+// a job the process died holding is invisible to every later worker, and GET /scans
+// counts it as pending - which outranks an existing verdict. One orphaned row is
+// enough to report 'analyzing' for the life of a scan whose verdict was written
+// minutes earlier and is sitting in the database unread.
+describe('jobs interrupted by a dying worker', () => {
+  const ocrJobOf = (scan: string) => getDb().prepare(
+    `SELECT id FROM processing_jobs
+      WHERE type = 'process_evidence'
+        AND target_id IN (SELECT id FROM evidence_assets WHERE inspection_id = ?)
+      LIMIT 1`,
+  ).get(scan) as { id: string };
+
+  const analysedScan = async (brand: string) => {
+    const scan = (await officer.post('/api/v1/scans').set(H).send({ product: { brand } })).body.scanId;
+    await officer.post(`/api/v1/scans/${scan}/images`).set(H)
+      .attach('file', png(`${brand}-front`), { filename: 'front.png', contentType: 'image/png' })
+      .field('side', 'front');
+    await officer.post(`/api/v1/scans/${scan}/analyze`).set(H);
+    await drainJobs(getDb());
+    return scan;
+  };
+
+  it('requeues the orphan, and the scan reports its verdict again', async () => {
+    const db = getDb();
+    const scan = await analysedScan('Interrupted Butter');
+    expect((await officer.get(`/api/v1/scans/${scan}`).set(H)).body.status).toBe('ready');
+
+    // Exactly the row a killed process leaves: 'processing', one attempt spent,
+    // no error, and nothing anywhere still running it.
+    const job = ocrJobOf(scan);
+    db.prepare("UPDATE processing_jobs SET status = 'processing', attempts = 1, progress = 10, error = NULL WHERE id = ?")
+      .run(job.id);
+    const stuck = await officer.get(`/api/v1/scans/${scan}`).set(H);
+    expect(stuck.body.status).toBe('analyzing');
+    expect(stuck.body.verdict).toBeTruthy(); // the verdict was there all along
+
+    expect(reclaimStaleJobs(db)).toBe(1);
+    const back = db.prepare('SELECT status, attempts, error FROM processing_jobs WHERE id = ?')
+      .get(job.id) as any;
+    expect(back.status).toBe('queued');
+    expect(back.attempts).toBe(1); // the attempt was spent; it is not charged twice
+    expect(back.error).toMatch(/Interrupted/);
+
+    await drainJobs(db);
+    expect((await officer.get(`/api/v1/scans/${scan}`).set(H)).body.status).toBe('ready');
+  });
+
+  it('dead-letters a job that has already spent its attempts', async () => {
+    const db = getDb();
+    const scan = await analysedScan('Poison Butter');
+    const job = ocrJobOf(scan);
+    // A handler that kills the process never reaches the catch in runJob, so it
+    // never dead-letters itself. Without this check the same image would be picked
+    // up and crash the server again on every boot, for ever.
+    db.prepare("UPDATE processing_jobs SET status = 'processing', attempts = 3, progress = 10 WHERE id = ?")
+      .run(job.id);
+
+    expect(reclaimStaleJobs(db)).toBe(1);
+    const parked = db.prepare('SELECT status FROM processing_jobs WHERE id = ?').get(job.id) as any;
+    expect(parked.status).toBe('dead_letter');
+
+    // Parked, not pending: the scan stops claiming work is in flight and shows the
+    // verdict it already has.
+    expect((await officer.get(`/api/v1/scans/${scan}`).set(H)).body.status).toBe('ready');
+  });
+
+  it('leaves a healthy queue alone', () => {
+    expect(reclaimStaleJobs(getDb())).toBe(0);
   });
 });
 
