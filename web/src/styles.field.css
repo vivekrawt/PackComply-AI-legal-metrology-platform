@@ -209,7 +209,6 @@ button.wide, .btn.wide { width: 100%; }
 .verdict-tally div:first-child { border-left: 0; }
 .verdict-tally b { display: block; font-size: 1.5rem; font-weight: 800; color: var(--ink-strong); line-height: 1.1; font-variant-numeric: tabular-nums; }
 .verdict-tally span { font-size: 0.8rem; color: var(--ink-soft); }
-.verdict-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .disclaimer { color: var(--ink-faint); font-size: 0.79rem; border-top: 1px solid var(--line); padding-top: 16px; margin-top: 32px; }
 
 /* Evidence beside the findings, so a declaration and the face it should be on are
@@ -235,10 +234,6 @@ button.wide, .btn.wide { width: 100%; }
 .panel > h2 { margin: 0 0 14px; font-size: 1rem; font-weight: 700; }
 .panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .panel-head h2 { margin: 0; font-size: 1rem; font-weight: 700; }
-.field-panel { border: 1px solid var(--line); border-radius: 12px; background: var(--paper); padding: 18px 20px; margin-bottom: 16px; }
-.field-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.field-panel h2 { margin: 0; font-size: 1rem; font-weight: 700; }
-.field-panel summary { cursor: pointer; color: var(--ink-strong); }
 
 .decl-table td.decl-name { font-weight: 600; color: var(--ink-strong); }
 /* A rule reference is a citation, and a citation broken across two lines stops
@@ -305,7 +300,6 @@ button.wide, .btn.wide { width: 100%; }
 .engine-body small { color: var(--ink-soft); font-size: 0.77rem; }
 .engine-body code { font-size: 0.74rem; background: var(--panel); border-radius: 4px; padding: 1px 5px; }
 .engine-note { font-size: 0.83rem; margin: 10px 0 0; }
-.engine-counts { display: flex; gap: 14px; flex-wrap: wrap; }
 
 /* ======================================================= evidence viewer ==== */
 /* Full-screen, because the question it answers — is the declaration actually on

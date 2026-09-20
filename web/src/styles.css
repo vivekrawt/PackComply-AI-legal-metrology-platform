@@ -94,7 +94,6 @@ h1, h2, h3 { color: var(--ink-strong); letter-spacing: -0.015em; }
 .pc-who-text small { display: block; font-size: 0.76rem; color: var(--ink-soft); }
 
 /* ------------------------------------------------------------------- layout */
-.app-shell { display: flex; min-height: 100vh; }
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .topbar {
   background: transparent; padding: 22px 30px 0;
@@ -174,10 +173,6 @@ td.go::after { content: "\203A"; font-size: 1.15rem; line-height: 1; }
   margin: 0 0 24px; padding-bottom: 20px; border-bottom: 1px solid var(--line);
 }
 .rv-stats.plain, .pc-stats.plain { border-bottom: 0; padding-bottom: 0; }
-.rv-stats.boxed, .pc-stats.boxed {
-  background: var(--paper); border: 1px solid var(--line); border-radius: 12px;
-  padding: 16px 4px; border-bottom-width: 1px;
-}
 .rv-stat, .pc-stat {
   padding: 2px 26px; border-left: 1px solid var(--line); min-width: 108px; flex: 0 1 auto;
 }
@@ -196,12 +191,12 @@ td.go::after { content: "\203A"; font-size: 1.15rem; line-height: 1; }
 /* ------------------------------------------------------------------- forms */
 label.field { display: block; margin-bottom: 16px; font-size: 0.85rem; color: var(--ink-strong); font-weight: 600; }
 label.field input, label.field select, label.field textarea,
-.rv-search, .pc-input {
+.search-field input, .pc-input {
   display: block; width: 100%; margin-top: 6px; padding: 10px 13px; font: inherit; font-size: 0.9rem;
   color: var(--ink); border: 1px solid var(--line); border-radius: 8px; background: #fff;
 }
 label.field input::placeholder, label.field textarea::placeholder, .pc-input::placeholder { color: var(--ink-faint); }
-label.field input:focus, label.field select:focus, label.field textarea:focus, .pc-input:focus, .rv-search:focus {
+label.field input:focus, label.field select:focus, label.field textarea:focus, .pc-input:focus {
   outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(29, 97, 231, 0.12);
 }
 label.field textarea { min-height: 84px; resize: vertical; }
@@ -276,7 +271,7 @@ button.quiet:disabled, button.secondary:disabled { background: #fff; border-colo
 }
 
 /* ------------------------------------------------------- filters and search */
-.filter-row, .pc-filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 18px; }
+.pc-filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 18px; }
 .filter-chip {
   background: #fff; border: 1px solid var(--line); color: var(--ink-soft);
   border-radius: 999px; padding: 8px 17px; font-size: 0.845rem; font-weight: 500;
@@ -320,18 +315,6 @@ button.quiet:disabled, button.secondary:disabled { background: #fff; border-colo
   color: var(--ink-faint); font-size: 0.66rem; font-weight: 700; font-style: italic;
   display: grid; place-items: center; flex-shrink: 0;
 }
-
-/* ------------------------------------------------------------ empty states */
-.empty-state {
-  text-align: center; padding: 40px 20px; background: var(--paper);
-  border: 1px solid var(--line); border-radius: 12px;
-}
-.empty-state .ring {
-  width: 44px; height: 44px; border-radius: 50%; border: 1.5px solid var(--line);
-  display: grid; place-items: center; margin: 0 auto 14px; color: var(--green);
-}
-.empty-state b { display: block; color: var(--ink-strong); font-size: 1rem; margin-bottom: 4px; }
-.empty-state p { margin: 0; color: var(--ink-soft); font-size: 0.875rem; }
 
 /* ------------------------------------------------------------------ stepper */
 /* The numbers are drawn, so the list must not also number itself. */

@@ -34,12 +34,13 @@ function PersonActions({ person, run, canDelete, profileHref, onDeleted }: {
   person: { id: string; name: string; email: string; status: string };
   run: (fn: () => Promise<unknown>) => () => Promise<void>;
   canDelete: boolean;
-  profileHref: string;
+  // Omitted on the profile screen itself, where "view profile" goes nowhere.
+  profileHref?: string;
   onDeleted?: () => void;
 }) {
   return (
     <RowMenu label={`Actions for ${person.name}`}>
-      <Link to={profileHref}><IconEye />View profile</Link>
+      {profileHref && <Link to={profileHref}><IconEye />View profile</Link>}
       {person.status === 'active' ? (
         <button onClick={run(() => api.patch(`/admin/users/${person.id}`, { status: 'suspended' }))}
           title="Signs them out immediately and blocks sign-in until reactivated">
@@ -304,7 +305,7 @@ export function AuditorDetail() {
         </>}
         actions={can('admin.users') && (
           <PersonActions person={person} run={run} canDelete={can('admin.users.delete')}
-            profileHref={`/app/auditors/${person.id}`} onDeleted={() => nav('/app/auditors')} />
+            onDeleted={() => nav('/app/auditors')} />
         )}
       />
 
@@ -499,7 +500,7 @@ export function AdminDetail() {
         </>}
         actions={can('admin.users') && (
           <PersonActions person={person} run={run} canDelete={can('admin.users.delete')}
-            profileHref={`/app/admins/${person.id}`} onDeleted={() => nav('/app/admins')} />
+            onDeleted={() => nav('/app/admins')} />
         )}
       />
 

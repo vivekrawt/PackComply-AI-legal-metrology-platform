@@ -263,7 +263,7 @@ function DraftForm({ sets, onDone, onCancel }: { sets: any[]; onDone: () => void
         </p>
 
         <form onSubmit={submit}>
-          <div className="rv-form-grid">
+          <div className="rv-form-grid two">
             <label className="field">Rule set
               <select value={f.ruleSetId} onChange={(e) => set('ruleSetId', e.target.value)}>
                 {sets.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.layer})</option>)}

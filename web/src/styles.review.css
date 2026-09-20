@@ -69,9 +69,8 @@
 
 /* ============================================================== toolbars ==== */
 .rv-toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 4px 0 18px; }
-.rv-toolbar .filter-row, .rv-toolbar .pc-filters { margin: 0; flex: 1; }
+.rv-toolbar .pc-filters { margin: 0; flex: 1; }
 .rv-toolbar .search-field { margin-left: auto; }
-.rv-search { max-width: 300px; margin: 0; }
 
 .rv-tabs { display: flex; gap: 26px; border-bottom: 1px solid var(--line); margin: 6px 0 18px; }
 .rv-tabs button {
@@ -103,9 +102,12 @@
 .rv-panel-head h2 { margin: 0; }
 .rv-sub { margin: -4px 0 14px; font-size: 0.85rem; }
 .rv-section-title { font-size: 1rem; font-weight: 700; color: var(--ink-strong); margin: 26px 0 12px; }
-.rv-scroll { overflow-x: auto; }
 .rv-two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 16px; align-items: start; }
 .rv-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0 16px; }
+/* Two fixed columns where the fields are a record's metadata rather than a row of
+   equal knobs: five inputs strung across 1300px are five inputs nobody reads. */
+.rv-form-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 880px; }
+.pc-modal .rv-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .rv-note { color: var(--ink-faint); font-size: 0.8rem; margin-top: 20px; }
 .rv-facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; font-size: 0.85rem; margin: 0; }
 .rv-facts dt { color: var(--ink-soft); }
@@ -191,10 +193,6 @@
 .rv-people small { display: block; color: var(--ink-soft); font-size: 0.78rem; }
 .rv-people li > a:hover b { color: var(--blue); }
 .rv-people h3 { margin: 16px 0 0; font-size: 0.85rem; }
-
-.rv-mini-stats { display: flex; gap: 16px; font-size: 0.79rem; color: var(--ink-soft); white-space: nowrap; }
-.rv-mini-stats b { color: var(--ink-strong); font-size: 0.9rem; }
-.rv-row-sub { font-size: 0.78rem; margin-top: 1px; }
 
 /* A row-level menu, so a table does not have to carry four buttons per row. */
 .rv-menu { position: relative; display: inline-block; }
@@ -303,8 +301,7 @@
   .rv-period { padding: 4px 18px; min-width: 104px; }
 }
 @media (max-width: 620px) {
-  .rv-form-grid { grid-template-columns: 1fr; }
-  .rv-mini-stats { display: none; }
+  .rv-form-grid, .rv-form-grid.two { grid-template-columns: 1fr; }
   .rv-profile { gap: 12px; }
   .rv-toolbar .search-field { max-width: none; margin-left: 0; }
 }
