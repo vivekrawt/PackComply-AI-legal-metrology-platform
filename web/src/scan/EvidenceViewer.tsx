@@ -1,5 +1,7 @@
 import React from 'react';
 import { SIDE_LABELS, type ComplianceCheck, type ScanImage, type ScanOcrImage } from '../api';
+import { IconArrowLeft, IconClose } from '../components/icons';
+import { STATUS_META } from './ChecksView';
 
 // The evidence viewer: the officer's own photographs, with the text the
 // recogniser actually read drawn where it was read from.
@@ -10,10 +12,17 @@ import { SIDE_LABELS, type ComplianceCheck, type ScanImage, type ScanOcrImage } 
 // text matches what the model quoted are highlighted and the rest recede — so the
 // question "is it actually there?" is answered by looking, not by trusting.
 //
+// It takes the whole screen. The question it settles is answered by examining a
+// photograph, and a photograph examined inside a dialog the size of a card is a
+// photograph nobody examines.
+//
 // Boxes are fractions of the ORIGINAL photograph (the OCR sidecar maps them back
 // out of its prepared image), so they land correctly on the picture as taken.
 
 export const assetUrl = (assetId: string) => `/api/v1/assets/${assetId}/content`;
+
+const sideLabel = (im: ScanImage | undefined) =>
+  (im ? SIDE_LABELS[im.side ?? ''] ?? im.side ?? 'Unlabelled' : 'Unlabelled');
 
 // Loose containment match. OCR splits a declaration across lines as often as not,
 // so a block counts as a hit when either side contains the other once both are
@@ -39,10 +48,13 @@ interface ViewerProps {
   startAt: number;
   // When the viewer is opened from a finding, the text that finding quoted.
   highlight?: { check: ComplianceCheck } | null;
+  // Reading confidence for the scan as a whole, shown as provenance — never as a
+  // degree of legal compliance.
+  confidence?: number | null;
   onClose: () => void;
 }
 
-export function EvidenceViewer({ images, ocr, startAt, highlight, onClose }: ViewerProps) {
+export function EvidenceViewer({ images, ocr, startAt, highlight, confidence, onClose }: ViewerProps) {
   const [index, setIndex] = React.useState(startAt);
   const [showBoxes, setShowBoxes] = React.useState(true);
   const [hovered, setHovered] = React.useState<number | null>(null);
@@ -50,7 +62,8 @@ export function EvidenceViewer({ images, ocr, startAt, highlight, onClose }: Vie
   const image = images[index];
   const page = ocr?.find((o) => o.assetId === image?.id) ?? null;
   const blocks = page?.blocks ?? [];
-  const observed = highlight?.check.observedText ?? '';
+  const check = highlight?.check ?? null;
+  const observed = check?.observedText ?? '';
   const hits = React.useMemo(
     () => (observed ? matchingBlocks(blocks, observed) : new Set<number>()),
     [blocks, observed],
@@ -80,123 +93,180 @@ export function EvidenceViewer({ images, ocr, startAt, highlight, onClose }: Vie
   }, [images.length, onClose]);
 
   if (!image) return null;
+  const m = check ? STATUS_META[check.status] ?? { label: check.status, tone: 'neutral', icon: '·' } : null;
 
   return (
-    <div className="ev-backdrop" role="dialog" aria-modal="true" aria-label="Package image evidence" onClick={onClose}>
-      <div className="ev-shell" onClick={(e) => e.stopPropagation()}>
+    <div className="ev-backdrop" role="dialog" aria-modal="true" aria-label="Package image evidence">
+      <div className="ev-shell">
         <header className="ev-head">
           <div>
-            <b>{SIDE_LABELS[image.side ?? ''] ?? image.side ?? 'Unlabelled side'}</b>
-            <small>Image {index + 1} of {images.length}</small>
+            <h2>Package evidence</h2>
+            <div className="ev-head-meta">
+              <button className="link-btn" onClick={onClose}><IconArrowLeft />Back</button>
+              <span aria-hidden="true">·</span>
+              <span>Image {index + 1} of {images.length} — {sideLabel(image)}</span>
+            </div>
           </div>
-          <div className="ev-head-actions">
-            <label className="ev-toggle">
-              <input type="checkbox" checked={showBoxes} onChange={(e) => setShowBoxes(e.target.checked)} />
-              Show text found ({blocks.length})
-            </label>
-            <button className="ev-close" onClick={onClose} aria-label="Close the image viewer">✕</button>
-          </div>
+          <button className="ev-close" onClick={onClose} aria-label="Close the image viewer"><IconClose /></button>
         </header>
 
-        {highlight && (
-          <div className={`ev-check ${highlight.check.status}`}>
-            <b>{highlight.check.parameter}</b>
-            {observed ? (
-              <p>
-                {hits.size > 0
-                  ? `Highlighted below — ${hits.size} matching text region${hits.size === 1 ? '' : 's'} on this image.`
-                  : 'The quoted text was not located on this image. Check the other captured sides.'}
-                <span className="ev-quote">“{observed}”</span>
-              </p>
-            ) : (
-              <p>
-                Nothing was quoted for this requirement — it was not found in the text read from any
-                image. Look for it on the package yourself: it may sit on a face that was not captured,
-                or in text the recogniser could not read.
-              </p>
+        <div className="ev-cols">
+          <div>
+            <div className="ev-stage">
+              <div className="ev-frame">
+                <img src={assetUrl(image.id)} alt={`${sideLabel(image)} face of the package`} />
+                {showBoxes && blocks.map((b, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    className={`ev-box ${hits.has(i) ? 'hit' : ''} ${hovered === i ? 'on' : ''} ${observed && hits.size > 0 && !hits.has(i) ? 'dim' : ''}`}
+                    style={{
+                      left: `${b.bbox.x * 100}%`, top: `${b.bbox.y * 100}%`,
+                      width: `${b.bbox.w * 100}%`, height: `${b.bbox.h * 100}%`,
+                    }}
+                    onMouseEnter={() => setHovered(i)}
+                    onMouseLeave={() => setHovered(null)}
+                    onFocus={() => setHovered(i)}
+                    onBlur={() => setHovered(null)}
+                    title={b.text}
+                    aria-label={`Text read here: ${b.text}`}
+                  >
+                    <span className="ev-box-tip">{b.text}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {images.length > 1 && (
+              <div className="ev-thumbs">
+                <button className="ev-nav-btn" disabled={index === 0} onClick={() => setIndex((i) => i - 1)} aria-label="Previous image">‹</button>
+                <ul className="ev-strip">
+                  {images.map((im, i) => (
+                    <li key={im.id}>
+                      <button
+                        type="button" className={i === index ? 'on' : ''}
+                        onClick={() => setIndex(i)} aria-current={i === index}
+                      >
+                        <img src={assetUrl(im.id)} alt={`${sideLabel(im)} face`} loading="lazy" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <button className="ev-nav-btn" disabled={index >= images.length - 1} onClick={() => setIndex((i) => i + 1)} aria-label="Next image">›</button>
+              </div>
             )}
           </div>
-        )}
 
-        <div className="ev-stage">
-          <div className="ev-frame">
-            <img src={assetUrl(image.id)} alt={`${SIDE_LABELS[image.side ?? ''] ?? 'Package'} face of the package`} />
-            {showBoxes && blocks.map((b, i) => (
-              <button
-                key={i}
-                type="button"
-                className={`ev-box ${hits.has(i) ? 'hit' : ''} ${hovered === i ? 'on' : ''} ${observed && hits.size > 0 && !hits.has(i) ? 'dim' : ''}`}
-                style={{
-                  left: `${b.bbox.x * 100}%`, top: `${b.bbox.y * 100}%`,
-                  width: `${b.bbox.w * 100}%`, height: `${b.bbox.h * 100}%`,
-                }}
-                onMouseEnter={() => setHovered(i)}
-                onMouseLeave={() => setHovered(null)}
-                onFocus={() => setHovered(i)}
-                onBlur={() => setHovered(null)}
-                title={b.text}
-                aria-label={`Text read here: ${b.text}`}
-              >
-                <span className="ev-box-tip">{b.text}</span>
-              </button>
-            ))}
-          </div>
+          <aside className="ev-side">
+            {check && m ? (
+              <>
+                <h3>{check.parameter}</h3>
+                <span className={`chip pill ${m.tone}`}>
+                  <span className="ico" aria-hidden="true">{m.icon}</span>{m.label}
+                </span>
+                {check.ruleReference && <p className="rule">{check.ruleReference}</p>}
+
+                <h4>Recognised text</h4>
+                {observed ? (
+                  <>
+                    <p className="ev-read">&ldquo;{observed}&rdquo;</p>
+                    <p className="caveat">
+                      {hits.size > 0
+                        ? `Highlighted on the photograph — ${hits.size} matching text region${hits.size === 1 ? '' : 's'} on this image.`
+                        : 'The quoted text was not located on this image. Check the other captured sides.'}
+                    </p>
+                  </>
+                ) : (
+                  <p className="caveat">
+                    Nothing was quoted for this requirement — it was not found in the text read from
+                    any image. Look for it on the package yourself: it may sit on a face that was not
+                    captured, or in text the recogniser could not read.
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <h3>{sideLabel(image)}</h3>
+                <p className="caveat">
+                  {page === null
+                    ? 'Text regions are still being read for this image.'
+                    : !page.processed
+                      ? 'This image was not read by the recogniser, so nothing is marked on it — and nothing on this face was available to the assessment.'
+                      : blocks.length === 0
+                        ? 'The recogniser read this image and found no legible text on it.'
+                        : 'Every box marks text the recogniser read. Select one to see what it read.'}
+                </p>
+              </>
+            )}
+
+            <label className="ev-toggle">
+              <input type="checkbox" checked={showBoxes} onChange={(e) => setShowBoxes(e.target.checked)} />
+              <span>
+                Show recognised text regions
+                <small>{blocks.length} text region{blocks.length === 1 ? '' : 's'}</small>
+              </span>
+            </label>
+
+            <div className="ev-prov">
+              <h4>Evidence &amp; provenance</h4>
+              <div className="ev-prov-row">
+                <span>Reading confidence</span>
+                <b>{confidence != null ? `${Math.round(confidence * 100)}%` : 'not reported'}</b>
+              </div>
+              <p className="caveat">Confidence reflects text legibility, not legal compliance.</p>
+            </div>
+          </aside>
         </div>
-
-        <footer className="ev-foot">
-          <button className="secondary" disabled={index === 0} onClick={() => setIndex((i) => i - 1)}>← Previous</button>
-          <p className="ev-note">
-            {page === null
-              ? 'Text regions are still being read for this image.'
-              : !page.processed
-                ? 'This image was not read by the recogniser, so nothing is marked on it.'
-                : blocks.length === 0
-                  ? 'The recogniser read this image and found no legible text on it.'
-                  : 'Boxes mark the text the recogniser read. Hover or tap one to see what it read.'}
-          </p>
-          <button className="secondary" disabled={index >= images.length - 1} onClick={() => setIndex((i) => i + 1)}>Next →</button>
-        </footer>
       </div>
     </div>
   );
 }
 
-// Thumbnail strip under the verdict. Every image the assessment saw, with how much
-// text came off each — a face that yielded nothing is the usual reason a
-// requirement lands in "could not be determined".
-export function EvidenceStrip({ images, ocr, onOpen }: {
+// The package as photographed: the face being read, and every other face under it.
+//
+// The assessment was made from these images and nothing else, so they sit beside
+// the findings rather than below them — a declaration and the face it should be on
+// are read together or not really read at all.
+export function PackageFigure({ images, ocr, onOpen }: {
   images: ScanImage[];
   ocr: ScanOcrImage[] | null;
   onOpen: (index: number) => void;
 }) {
-  if (images.length === 0) return null;
-  return (
-    <section className="field-panel ev-panel">
-      <div className="field-panel-head">
-        <h2>Images this assessment read</h2>
-        <small className="muted">Tap an image to see the text found on it</small>
+  const [at, setAt] = React.useState(0);
+  if (images.length === 0) {
+    return (
+      <div className="result-figure">
+        <div className="empty">No images were captured for this package.</div>
       </div>
+    );
+  }
+  const current = images[Math.min(at, images.length - 1)];
+  return (
+    <div className="result-figure">
+      <button
+        type="button" style={{ padding: 0, border: 0, background: 'none', width: '100%', display: 'block' }}
+        onClick={() => onOpen(at)} aria-label={`Open the ${sideLabel(current)} face full size`}
+      >
+        <img src={assetUrl(current.id)} alt={`${sideLabel(current)} face of the package`} />
+      </button>
       <ul className="ev-strip">
         {images.map((im, i) => {
           const page = ocr?.find((o) => o.assetId === im.id);
           const count = page?.blocks.length ?? null;
           return (
             <li key={im.id}>
-              <button type="button" onClick={() => onOpen(i)}>
-                <img src={assetUrl(im.id)} alt={`${SIDE_LABELS[im.side ?? ''] ?? 'Package'} face`} loading="lazy" />
-                <span className="ev-strip-cap">
-                  <b>{SIDE_LABELS[im.side ?? ''] ?? im.side ?? 'Unlabelled'}</b>
-                  <small>
-                    {count === null ? 'reading…'
-                      : count === 0 ? 'no text found'
-                        : `${count} text region${count === 1 ? '' : 's'}`}
-                  </small>
-                </span>
+              <button
+                type="button" className={i === at ? 'on' : ''} onClick={() => setAt(i)}
+                aria-current={i === at}
+                title={count === null ? 'reading…' : count === 0 ? 'no text found' : `${count} text regions`}
+              >
+                <img src={assetUrl(im.id)} alt={`${sideLabel(im)} face`} loading="lazy" />
+                <span className="ev-strip-cap">{sideLabel(im)}</span>
               </button>
             </li>
           );
         })}
       </ul>
-    </section>
+    </div>
   );
 }

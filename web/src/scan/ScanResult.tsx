@@ -1,14 +1,15 @@
 import React from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   api, SIDE_LABELS, VERDICT_META,
   type ComplianceCheck, type Scan, type ScanOcr,
 } from '../api';
 import { ErrorText } from '../components/common';
-import { EvidenceStrip, EvidenceViewer } from './EvidenceViewer';
-import { CheckGroup, EngineCrossCheck } from './ChecksView';
+import { IconArrowLeft, IconDoc, IconDownload, IconGear, IconPeople, IconPlus } from '../components/icons';
+import { EvidenceViewer, PackageFigure } from './EvidenceViewer';
+import { DeclarationsPanel, EngineCrossCheck, engineSummary } from './ChecksView';
 
-// Analysis progress, then the verdict. Satisfied requirements are shown as
+// Analysis progress, then the assessment. Satisfied requirements are shown as
 // prominently as failures: an officer needs to see what the package got right in
 // order to write the notice for what it got wrong.
 //
@@ -19,6 +20,13 @@ import { CheckGroup, EngineCrossCheck } from './ChecksView';
 
 const POLL_MS = 2000;
 
+const fmtWhen = (iso: string) => new Date(iso).toLocaleString(undefined, {
+  day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+});
+const fmtDay = (iso: string) => new Date(iso).toLocaleDateString(undefined, {
+  day: '2-digit', month: 'short', year: 'numeric',
+});
+
 export function ScanResult() {
   const { id } = useParams();
   const nav = useNavigate();
@@ -28,6 +36,9 @@ export function ScanResult() {
   const [retrying, setRetrying] = React.useState(false);
   const [attempt, setAttempt] = React.useState(0);
   const [viewer, setViewer] = React.useState<{ at: number; check?: ComplianceCheck } | null>(null);
+  // The two footers open in place rather than navigating: the workings belong to
+  // the assessment above them, not to a screen of their own.
+  const [drawer, setDrawer] = React.useState<'provenance' | 'engine' | null>(null);
 
   React.useEffect(() => {
     let alive = true;
@@ -69,8 +80,8 @@ export function ScanResult() {
     } catch (err) { setError(err); } finally { setRetrying(false); }
   };
 
-  if (error && !scan) return <div className="field-page narrow"><ErrorText error={error} /></div>;
-  if (!scan) return <div className="field-page narrow"><p className="muted">Loading…</p></div>;
+  if (error && !scan) return <div className="field-page"><ErrorText error={error} /></div>;
+  if (!scan) return <div className="field-page"><p className="muted">Loading…</p></div>;
 
   if (scan.status === 'analyzing' || scan.status === 'capturing') {
     const pct = scan.progress.total > 0
@@ -79,18 +90,18 @@ export function ScanResult() {
     return (
       <div className="field-page narrow">
         <h1>Analysing the package</h1>
+        <p className="page-sub">Reading the label text, then checking it against the 2011 Rules.</p>
         <div className="analysing">
           <div className="progress-track"><div className="progress-fill" style={{ width: `${Math.max(pct, 8)}%` }} /></div>
           <p className="muted" role="status" aria-live="polite">
-            {scan.progress.done} of {scan.progress.total} steps complete — reading the label text,
-            then checking it against the 2011 Rules.
+            {scan.progress.done} of {scan.progress.total} steps complete
           </p>
+          <ul className="step-list">
+            <li className={scan.progress.done > 0 ? 'done' : 'active'}>Reading text from each image (OCR)</li>
+            <li className={scan.progress.pending <= 1 ? 'done' : ''}>Extracting the declarations</li>
+            <li className={scan.progress.pending === 0 ? 'done' : ''}>Checking against the Legal Metrology Rules, 2011</li>
+          </ul>
         </div>
-        <ul className="step-list">
-          <li className={scan.progress.done > 0 ? 'done' : 'active'}>Reading text from each image (OCR)</li>
-          <li className={scan.progress.pending <= 1 ? 'done' : ''}>Extracting the declarations</li>
-          <li className={scan.progress.pending === 0 ? 'done' : ''}>Checking against the Legal Metrology Rules, 2011</li>
-        </ul>
       </div>
     );
   }
@@ -102,12 +113,12 @@ export function ScanResult() {
     const reasons = scan.verdict?.error ? [scan.verdict.error] : scan.progress.errors;
     return (
       <div className="field-page narrow">
-        <button className="link-back" onClick={() => nav('/app')}>← Back</button>
+        <button className="link-back" onClick={() => nav('/app')}><IconArrowLeft />Back</button>
         <h1>Analysis did not complete</h1>
-        <p className="muted">
+        <p className="page-sub">
           No compliance assessment was produced for this package. Your images are saved.
         </p>
-        <div className="error-text" role="alert">
+        <div className="error-text" role="alert" style={{ margin: '18px 0' }}>
           {reasons.length > 0
             ? <ul>{reasons.map((e, i) => <li key={i}>{e}</li>)}</ul>
             : 'The analysis produced no result.'}
@@ -144,21 +155,50 @@ export function ScanResult() {
   const openViewer = (at: number, check?: ComplianceCheck) => setViewer({ at, check });
 
   return (
-    <div className="field-page narrow">
-      <button className="link-back" onClick={() => nav('/app')}>← Back</button>
+    <div className="field-page">
+      <nav className="breadcrumb" aria-label="Breadcrumb">
+        <Link to="/app/history">History</Link>
+        <span className="sep" aria-hidden="true">/</span>
+        <span>{product}</span>
+      </nav>
 
-      <div className={`verdict-banner ${meta.tone}`}>
-        <span className="verdict-ico" aria-hidden="true">{meta.icon}</span>
-        <div>
-          <h1>{meta.label}</h1>
-          <p>{meta.blurb}</p>
+      <div className="verdict-head">
+        <div className="verdict-title">
+          <h1>{product}</h1>
+          <p className="meta">
+            {fmtDay(scan.createdAt)} · {scan.images.length} image{scan.images.length === 1 ? '' : 's'}
+            {v.isMock ? ' · rule engine only' : ''}
+          </p>
+        </div>
+        <div className="verdict-state">
+          <span className={`chip pill ${meta.tone}`} role="status">
+            <span className="ico" aria-hidden="true">{meta.icon}</span>{meta.label}
+          </span>
+          <small>AI assessment — officer verification required</small>
+        </div>
+        <div className="page-head-actions">
+          {/* The report is built on demand from the stored verdict and evidence, so
+              the link is always live — there is no separate "generate" step to get
+              out of step with the scan. */}
+          <a className="btn secondary" href={`/api/v1/scans/${scan.scanId}/report.pdf`} target="_blank" rel="noreferrer">
+            <IconDownload />Download PDF
+          </a>
+          <button className="primary" onClick={() => nav('/app/scan/new')}>Scan another product</button>
         </div>
       </div>
 
-      <p className="verdict-product">
-        {product} · scanned {new Date(scan.createdAt).toLocaleString()} · {scan.images.length} image
-        {scan.images.length === 1 ? '' : 's'}
-      </p>
+      <div className="verdict-line">
+        <p className="verdict-summary">
+          {v.isMock
+            ? <><b>No AI assessment was performed.</b> {v.summary}</>
+            : v.summary || meta.blurb}
+        </p>
+        <div className="verdict-tally">
+          <div><b>{satisfied.length}</b><span>Met</span></div>
+          <div><b>{missing.length}</b><span>Missing</span></div>
+          <div><b>{unclear.length}</b><span>Unclear</span></div>
+        </div>
+      </div>
 
       {offerRecheck && (
         <div className="warn-box unread-faces">
@@ -194,66 +234,70 @@ export function ScanResult() {
         </div>
       )}
 
-      {v.isMock && (
-        <p className="warn-box">
-          <b>No AI assessment was performed.</b> {v.summary}
-        </p>
-      )}
-      {!v.isMock && v.summary && <p className="verdict-summary">{v.summary}</p>}
-
-      <div className="verdict-tally">
-        <div className="ok"><b>{satisfied.length}</b><span>met</span></div>
-        <div className="bad"><b>{missing.length}</b><span>missing</span></div>
-        <div className="warn"><b>{unclear.length}</b><span>unclear</span></div>
+      <div className="result-cols">
+        <PackageFigure images={scan.images} ocr={ocr?.images ?? null} onOpen={(i) => openViewer(i)} />
+        <DeclarationsPanel checks={v.checks} images={scan.images.length} onVerify={(c) => openViewer(0, c)} />
       </div>
 
-      <EvidenceStrip images={scan.images} ocr={ocr?.images ?? null} onOpen={(i) => openViewer(i)} />
+      <div className="result-links">
+        <button
+          className="result-link" aria-expanded={drawer === 'provenance'}
+          onClick={() => setDrawer(drawer === 'provenance' ? null : 'provenance')}
+        >
+          <span className="result-link-ico"><IconDoc /></span>
+          <span className="result-link-body">
+            <b>Evidence &amp; provenance</b>
+            <small>{scan.images.length} image{scan.images.length === 1 ? '' : 's'} · {fmtWhen(scan.createdAt)}</small>
+          </span>
+        </button>
+        {scan.engineFindings.length > 0 && (
+          <button
+            className="result-link" aria-expanded={drawer === 'engine'}
+            onClick={() => setDrawer(drawer === 'engine' ? null : 'engine')}
+          >
+            <span className="result-link-ico"><IconGear /></span>
+            <span className="result-link-body">
+              <b>Rule-engine cross-check</b>
+              <small>{engineSummary(scan.engineFindings)}</small>
+            </span>
+          </button>
+        )}
+      </div>
 
-      {missing.length > 0 && (
-        <CheckGroup kind="missing" checks={missing} images={scan.images.length} onVerify={(c) => openViewer(0, c)} />
-      )}
-      {unclear.length > 0 && (
-        <CheckGroup kind="unclear" checks={unclear} images={scan.images.length} onVerify={(c) => openViewer(0, c)} />
-      )}
-      {satisfied.length > 0 && (
-        <CheckGroup kind="present" checks={satisfied} images={scan.images.length} onVerify={(c) => openViewer(0, c)} />
+      {drawer === 'provenance' && (
+        <section className="panel" style={{ marginTop: 16 }}>
+          <div className="panel-head">
+            <h2>Evidence &amp; provenance</h2>
+            <button className="link-btn" onClick={() => setDrawer(null)}>Close</button>
+          </div>
+          <dl className="provenance">
+            <dt>Assessed by</dt>
+            <dd>{v.provider} · {v.modelVersion}{v.isMock ? ' (not an AI assessment)' : ''}</dd>
+            <dt>Statutory text applied</dt>
+            <dd>
+              {v.rulesSources.length ? v.rulesSources.join(', ') : 'none'}
+              {v.rulesSha256 ? <><br /><code>sha256 {v.rulesSha256.slice(0, 24)}…</code></> : null}
+            </dd>
+            <dt>Images captured</dt>
+            <dd>{scan.images.map((i) => SIDE_LABELS[i.side ?? ''] ?? i.side ?? 'unlabelled').join(', ') || 'none'}</dd>
+            <dt>Reading confidence</dt>
+            <dd>
+              {v.confidence != null ? `${Math.round(v.confidence * 100)}%` : 'not reported'}
+              <small> — reflects OCR legibility, not a degree of legal compliance.</small>
+            </dd>
+          </dl>
+          <h3>Text read from the package</h3>
+          <pre className="ocr-dump">{v.ocrText || '(no text was recovered)'}</pre>
+        </section>
       )}
 
-      <details className="field-panel">
-        <summary><b>Evidence and provenance</b></summary>
-        <dl className="provenance">
-          <dt>Assessed by</dt>
-          <dd>{v.provider} · {v.modelVersion}{v.isMock ? ' (not an AI assessment)' : ''}</dd>
-          <dt>Statutory text applied</dt>
-          <dd>
-            {v.rulesSources.length ? v.rulesSources.join(', ') : 'none'}
-            {v.rulesSha256 ? <><br /><code>sha256 {v.rulesSha256.slice(0, 24)}…</code></> : null}
-          </dd>
-          <dt>Images captured</dt>
-          <dd>{scan.images.map((i) => SIDE_LABELS[i.side ?? ''] ?? i.side ?? 'unlabelled').join(', ') || 'none'}</dd>
-          <dt>Confidence in the reading</dt>
-          <dd>
-            {v.confidence != null ? `${Math.round(v.confidence * 100)}%` : 'not reported'}
-            <small> — reflects OCR legibility, not a degree of legal compliance.</small>
-          </dd>
-        </dl>
-        <h3>Text read from the package</h3>
-        <pre className="ocr-dump">{v.ocrText || '(no text was recovered)'}</pre>
-      </details>
-
-      {scan.engineFindings.length > 0 && <EngineCrossCheck findings={scan.engineFindings} />}
+      {drawer === 'engine' && (
+        <div style={{ marginTop: 16 }}>
+          <EngineCrossCheck findings={scan.engineFindings} onClose={() => setDrawer(null)} />
+        </div>
+      )}
 
       <ApprovalPanel scan={scan} onChanged={() => setAttempt((n) => n + 1)} />
-
-      <div className="verdict-actions">
-        {/* The report is built on demand from the stored verdict and evidence, so
-            the link is always live — there is no separate "generate" step to get
-            out of step with the scan. */}
-        <a className="btn primary" href={`/api/v1/scans/${scan.scanId}/report.pdf`} target="_blank" rel="noreferrer">
-          Download report (PDF)
-        </a>
-        <button className="secondary" onClick={() => nav('/app/scan/new')}>Scan another product</button>
-      </div>
 
       <ErrorText error={error} />
 
@@ -268,6 +312,7 @@ export function ScanResult() {
           ocr={ocr?.images ?? null}
           startAt={viewer.at}
           highlight={viewer.check ? { check: viewer.check } : null}
+          confidence={v.confidence}
           onClose={() => setViewer(null)}
         />
       )}
@@ -304,65 +349,50 @@ function ApprovalPanel({ scan, onChanged }: { scan: Scan; onChanged: () => void 
       : review?.decision === 'accepted' ? { tone: 'passed', icon: '✓', label: 'Approved' }
         : review?.decision === 'rejected' ? { tone: 'failed', icon: '✕', label: 'Rejected' }
           : review?.decision === 'escalated'
-            ? { tone: 'not_assessable', icon: '↑', label: 'With the super administrator' }
+            ? { tone: 'not_assessable', icon: '↑', label: 'Referred to super administrator' }
             : { tone: 'needs_review', icon: '…', label: 'Awaiting your admin' };
 
+  const hint = !submitted
+    ? 'Your admin does not see this scan until you send it. Add another face first if anything above could not be determined.'
+    : sentBack
+      ? 'Photograph the package again — retake the faces that could not be read — then send it back for review.'
+      : decided
+        ? 'This scan has been decided. Scanning the package again starts a fresh case.'
+        : 'Your admin decides it from here — the outcome appears on this screen and on your home page.';
+
   return (
-    <section className="field-panel approval">
-      <div className="field-panel-head">
-        <h2>Admin approval</h2>
-        <span className={`chip ${status.tone}`}>
-          <span className="ico" aria-hidden="true">{status.icon}</span>{status.label}
-        </span>
+    <section className="approval">
+      <span className="approval-ico"><IconPeople size={20} /></span>
+      <div className="approval-main">
+        <b>Admin approval</b>
+        <p className="approval-hint">{hint}</p>
       </div>
-
-      {review && (
-        <div className={`approval-note ${review.decision}`}>
-          <b>{review.reviewerName ?? 'Your admin'} said:</b>
-          <p>{review.reason}</p>
-          <small>{new Date(review.createdAt).toLocaleString()}</small>
-        </div>
-      )}
-
-      {!submitted && (
-        <p className="muted approval-hint">
-          Your admin does not see this scan until you send it. Add another face of the package
-          first if anything above reads &ldquo;could not be determined&rdquo;.
-        </p>
-      )}
-      {submitted && !review && (
-        <p className="muted approval-hint">
-          Sent for review. Your admin decides it from here — the outcome appears on this screen
-          and on your home page.
-        </p>
-      )}
-      {sentBack && (
-        <p className="muted approval-hint">
-          Photograph the package again — the faces that could not be read are the ones to
-          retake — then send it back for review.
-        </p>
-      )}
-      {decided && (
-        <p className="muted approval-hint">
-          This scan has been decided. Scanning the package again starts a fresh case.
-        </p>
-      )}
-
-      <ErrorText error={error} />
+      <span className={`chip ${status.tone}`}>
+        <span className="ico" aria-hidden="true">{status.icon}</span>{status.label}
+      </span>
 
       {(!submitted || sentBack) && (
         <div className="approval-actions">
           {sentBack && (
             <button className="secondary" onClick={() => nav(`/app/scan/new?scan=${scan.scanId}`)}>
-              ＋ Photograph it again
+              <IconPlus />Photograph it again
             </button>
           )}
           <button className="primary" onClick={send} disabled={busy}>
-            {busy ? 'Sending…' : sentBack ? 'Send to admin again' : 'Send to admin for approval'}
+            {busy ? 'Sending…' : sentBack ? 'Send to admin again' : 'Send for approval'}
           </button>
         </div>
       )}
+
+      {review && (
+        <div className={`approval-note ${review.decision}`}>
+          <b>{review.reviewerName ?? 'Your admin'} said:</b>
+          <p>{review.reason}</p>
+          <small>{fmtWhen(review.createdAt)}</small>
+        </div>
+      )}
+
+      {error != null && <div style={{ width: '100%' }}><ErrorText error={error} /></div>}
     </section>
   );
 }
-
