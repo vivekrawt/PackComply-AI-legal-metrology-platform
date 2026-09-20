@@ -22,6 +22,42 @@ export const STATUS_META: Record<string, { label: string; tone: string; icon: st
   unclear: { label: 'Unclear', tone: 'needs_review', icon: '?' },
 };
 
+// `parameter` is whatever the judge returned, and a model asked for a declaration
+// name frequently answers with the schema key it was given — `mfg_date`. That is
+// the right identifier and the wrong label: an officer reads this table against a
+// statute, not against a database. Known keys get the declaration's own name; an
+// unrecognised one is de-slugged rather than shown raw.
+const DECLARATION_NAMES: Record<string, string> = {
+  manufacturer_name_address: 'Manufacturer details',
+  responsible_entity: 'Manufacturer details',
+  product_name: 'Product name',
+  common_name: 'Common or generic name',
+  net_quantity: 'Net quantity',
+  mrp: 'Retail sale price',
+  retail_sale_price: 'Retail sale price',
+  mfg_date: 'Manufacturing date',
+  packing_date: 'Packing date',
+  import_date: 'Import date',
+  best_before: 'Best before',
+  expiry_date: 'Expiry date',
+  consumer_care: 'Consumer care',
+  country_of_origin: 'Country of origin',
+  unit_sale_price: 'Unit sale price',
+  dimensions: 'Dimensions',
+  pdp_placement: 'Principal display panel',
+  font_size: 'Character height',
+};
+
+export function declarationLabel(parameter: string): string {
+  const key = parameter.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (DECLARATION_NAMES[key]) return DECLARATION_NAMES[key];
+  // Not a key at all — the judge answered in prose, which needs no help.
+  if (!/^[a-z0-9_]+$/.test(key)) return parameter.trim();
+  const words = key.split('_').filter(Boolean);
+  if (words.length === 0) return parameter.trim();
+  return words[0].charAt(0).toUpperCase() + words[0].slice(1) + (words.length > 1 ? ` ${words.slice(1).join(' ')}` : '');
+}
+
 type Filter = 'all' | 'missing' | 'unclear' | 'present';
 
 const FILTERS: { key: Filter; label: string }[] = [
@@ -95,13 +131,13 @@ export function DeclarationsPanel({ checks, images, onVerify }: {
                         <button
                           type="button" className="decl-toggle"
                           aria-expanded={isOpen}
-                          aria-label={`${isOpen ? 'Hide' : 'Show'} the finding for ${c.parameter}`}
+                          aria-label={`${isOpen ? 'Hide' : 'Show'} the finding for ${declarationLabel(c.parameter)}`}
                           onClick={() => setOpen(isOpen ? null : i)}
                         >
                           {isOpen ? '⌄' : '›'}
                         </button>
                       </td>
-                      <td className="decl-name">{c.parameter}</td>
+                      <td className="decl-name">{declarationLabel(c.parameter)}</td>
                       <td className="rule">{c.ruleReference || '—'}</td>
                       <td>
                         <span className={`chip ${m.tone}`}>
@@ -169,7 +205,7 @@ export function KeyFindings({ checks, onVerify }: {
             <li key={`${c.parameter}-${i}`}>
               <span className={`chip ${m.tone}`}>
                 <span className="ico" aria-hidden="true">{m.icon}</span>
-                {c.parameter} — {m.label}
+                {declarationLabel(c.parameter)} — {m.label}
               </span>
               <button type="button" className="link-btn verify-link" onClick={() => onVerify(c)}>
                 View evidence

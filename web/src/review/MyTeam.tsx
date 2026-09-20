@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, type ScanStats } from '../api';
 import { AuthContext } from '../App';
 import { ErrorText, useAsync } from '../components/common';
-import { MagnitudeBar, StatTiles, StatusChip, scanStatTiles } from './widgets';
+import { StatTiles, StatusChip, scanStatTiles } from './widgets';
 
 // An admin's view of their own team: the auditors reporting to them.
 //
@@ -55,7 +55,6 @@ export function MyTeam() {
   }
   const { team, stats, auditors } = d.data;
   const byId = new Map((auditorStats.data?.auditors ?? []).map((a) => [a.id, a]));
-  const max = Math.max(...(auditorStats.data?.auditors ?? []).map((a) => a.stats.total), 1);
 
   return (
     <>
@@ -95,7 +94,6 @@ export function MyTeam() {
                           <Link className="row-link" to={`/app/auditors/${a.id}`} onClick={(e) => e.stopPropagation()}>
                             {a.name}
                           </Link>
-                          {s && <MagnitudeBar value={s.total} max={max} />}
                         </td>
                         <td className="muted">{a.email}</td>
                         <td><StatusChip status={a.status} /></td>

@@ -1,7 +1,7 @@
 import React from 'react';
 import { SIDE_LABELS, type ComplianceCheck, type ScanImage, type ScanOcrImage } from '../api';
 import { IconArrowLeft, IconClose } from '../components/icons';
-import { STATUS_META } from './ChecksView';
+import { STATUS_META, declarationLabel } from './ChecksView';
 
 // The evidence viewer: the officer's own photographs, with the text the
 // recogniser actually read drawn where it was read from.
@@ -160,7 +160,7 @@ export function EvidenceViewer({ images, ocr, startAt, highlight, confidence, on
           <aside className="ev-side">
             {check && m ? (
               <>
-                <h3>{check.parameter}</h3>
+                <h3>{declarationLabel(check.parameter)}</h3>
                 <span className={`chip pill ${m.tone}`}>
                   <span className="ico" aria-hidden="true">{m.icon}</span>{m.label}
                 </span>
@@ -244,7 +244,7 @@ export function PackageFigure({ images, ocr, onOpen }: {
   return (
     <div className="result-figure">
       <button
-        type="button" style={{ padding: 0, border: 0, background: 'none', width: '100%', display: 'block' }}
+        type="button" className="result-figure-main"
         onClick={() => onOpen(at)} aria-label={`Open the ${sideLabel(current)} face full size`}
       >
         <img src={assetUrl(current.id)} alt={`${sideLabel(current)} face of the package`} />

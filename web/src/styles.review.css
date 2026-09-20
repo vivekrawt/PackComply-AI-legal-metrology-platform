@@ -245,8 +245,13 @@
 .rv-legend .sw.decided { background: var(--blue); }
 .rv-legend .sw.open { background: #c9d3e2; }
 
-.rv-plot { grid-column: 1; grid-row: 1; position: relative; padding-left: 26px; }
-.rv-bars { display: flex; align-items: flex-end; gap: 10px; height: 150px; border-bottom: 1px solid var(--line); }
+/* Capped rather than stretched: a handful of months spread across a 1300px page
+   reads as a chart with something missing from it. */
+.rv-plot { grid-column: 1; grid-row: 1; position: relative; padding-left: 26px; max-width: 640px; }
+.rv-bars {
+  display: flex; align-items: flex-end; gap: 10px; height: 150px;
+  border-bottom: 1px solid var(--line); position: relative; z-index: 1;
+}
 .rv-grid-line { position: absolute; left: 26px; right: 0; border-top: 1px dashed var(--line); font-size: 0; }
 .rv-grid-line span { position: absolute; left: -26px; top: -8px; font-size: 0.72rem; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
 .rv-bar-col { flex: 0 1 62px; min-width: 0; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; }

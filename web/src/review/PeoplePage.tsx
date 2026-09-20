@@ -7,9 +7,7 @@ import {
 import { AuthContext } from '../App';
 import { Avatar, ErrorText, Modal, useAsync } from '../components/common';
 import { IconEye, IconPause, IconPlus, IconTrash } from '../components/icons';
-import {
-  MagnitudeBar, PeriodPanel, RowMenu, StatTiles, StatusChip, fmtDay, scanStatTiles,
-} from './widgets';
+import { PeriodPanel, RowMenu, StatTiles, StatusChip, fmtDay, scanStatTiles } from './widgets';
 
 // The people sections: Auditors do the work, Admins review it.
 //
@@ -178,7 +176,6 @@ export function AuditorsList() {
   const needle = q.trim().toLowerCase();
   const rows = all.filter((a) => !needle
     || [a.name, a.email, a.teamName].some((v) => v?.toLowerCase().includes(needle)));
-  const max = Math.max(...all.map((a) => a.stats.total), 1);
   const mayAdmin = can('admin.users');
 
   return (
@@ -238,7 +235,6 @@ export function AuditorsList() {
                             <span className="cell-sub">{a.email}</span>
                           </span>
                         </span>
-                        <MagnitudeBar value={a.stats.total} max={max} />
                       </td>
                       <td className="muted">{a.teamName ?? 'No team'}</td>
                       <td><StatusChip status={a.status} /></td>
@@ -381,7 +377,6 @@ export function AdminsList() {
   const needle = q.trim().toLowerCase();
   const rows = all.filter((a) => !needle
     || [a.name, a.email, a.teamName].some((v) => v?.toLowerCase().includes(needle)));
-  const max = Math.max(...all.map((a) => a.decisions.decisions), 1);
 
   return (
     <>
@@ -437,7 +432,6 @@ export function AdminsList() {
                             <span className="cell-sub">{a.email}</span>
                           </span>
                         </span>
-                        <MagnitudeBar value={a.decisions.decisions} max={max} />
                       </td>
                       <td className="muted">
                         {a.teamName ?? 'No team'}

@@ -126,6 +126,9 @@ export function ReviewQueue({ mode }: { mode: Mode }) {
     .filter((s) => !needle || [s.brand, s.genericName, s.officerName, s.teamName, s.location]
       .some((v) => v?.toLowerCase().includes(needle)));
 
+  // Nothing under the 'awaiting' filter is the queue being empty, which is good
+  // news — not a filter that matched nothing, which is a dead end.
+  const caughtUp = filter === 'awaiting' && !needle && scans.length === 0;
   const { title, blurb } = TITLES[mode];
   const title_ = (s: ScanSummary) => s.brand || s.genericName || 'Unnamed product';
 
@@ -183,15 +186,15 @@ export function ReviewQueue({ mode }: { mode: Mode }) {
           <div className="rv-empty">
             <div>
               <b>
-                {pool.length === 0
-                  ? mode === 'queue' ? 'No cases waiting for review' : 'Nothing here yet'
-                  : 'No scans match this filter'}
+                {caughtUp
+                  ? 'No cases waiting for review'
+                  : pool.length === 0 ? 'Nothing here yet' : 'No scans match this filter'}
               </b>
               <p>
-                {pool.length > 0
-                  ? 'Try a different filter or clear the search.'
-                  : mode === 'queue'
-                    ? 'Your team is all caught up.'
+                {caughtUp
+                  ? 'Your team is all caught up.'
+                  : pool.length > 0
+                    ? 'Try a different filter or clear the search.'
                     : isSuper
                       ? 'Cases appear once an auditor in your organization captures and analyses a package.'
                       : 'Cases appear once an auditor on your team captures and analyses a package.'}

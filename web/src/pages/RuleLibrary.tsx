@@ -95,7 +95,7 @@ export function RuleLibrary() {
                     </td>
                     <td>v{v.version}</td>
                     <td>{statusChip(v.status)}</td>
-                    <td className="muted">{v.effectiveFrom}{v.effectiveTo ? ` → ${v.effectiveTo}` : ''}</td>
+                    <td className="muted nowrap">{v.effectiveFrom}{v.effectiveTo ? ` → ${v.effectiveTo}` : ''}</td>
                     <td>
                       {v.legalStatus === 'REQUIRES_LEGAL_APPROVAL'
                         ? <span className="chip needs_review"><span className="ico" aria-hidden="true">!</span>Approval required</span>
@@ -186,7 +186,7 @@ export function RuleLibrary() {
         )}
 
         <div className="result-links" style={{ marginTop: 18 }}>
-          <div className="result-link" style={{ cursor: 'default' }}>
+          <div className="result-link static">
             <span className="result-link-ico"><IconCalendar /></span>
             <span className="result-link-body">
               <b>Upcoming effective dates</b>
@@ -197,7 +197,7 @@ export function RuleLibrary() {
               </small>
             </span>
           </div>
-          <div className="result-link" style={{ cursor: 'default' }}>
+          <div className="result-link static">
             <span className="result-link-ico"><IconDoc /></span>
             <span className="result-link-body">
               <b>Drafts in progress</b>

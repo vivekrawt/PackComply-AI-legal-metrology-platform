@@ -4,7 +4,7 @@ import { api, type ScanStats, type TeamRow } from '../api';
 import { AuthContext } from '../App';
 import { Avatar, ErrorText, Modal, useAsync } from '../components/common';
 import { IconArchive, IconPencil, IconPlus } from '../components/icons';
-import { MagnitudeBar, StatTiles, StatusChip, scanStatTiles } from './widgets';
+import { StatTiles, StatusChip, scanStatTiles } from './widgets';
 
 // Teams — the unit an admin reviews and an auditor works in.
 //
@@ -20,7 +20,6 @@ export function TeamsList() {
   const [form, setForm] = React.useState({ name: '', description: '' });
   const [error, setError] = React.useState<unknown>(null);
   const rows = teams.data?.teams ?? [];
-  const max = Math.max(...rows.map((t) => t.stats.total), 1);
   const mayManage = can('team.manage');
 
   const create = async (e?: React.FormEvent) => {
@@ -81,7 +80,6 @@ export function TeamsList() {
                             No admin — nothing this team captures will be reviewed
                           </span>
                         )}
-                        <MagnitudeBar value={t.stats.total} max={max} />
                       </td>
                       <td className="num">{t.adminCount}</td>
                       <td className="num">{t.auditorCount}</td>

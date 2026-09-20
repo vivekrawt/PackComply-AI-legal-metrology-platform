@@ -215,8 +215,16 @@ button.wide, .btn.wide { width: 100%; }
 /* Evidence beside the findings, so a declaration and the face it should be on are
    read together rather than in sequence. */
 .result-cols { display: grid; grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr); gap: 20px; align-items: start; }
-.result-figure { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: #fff; }
-.result-figure > img { width: 100%; aspect-ratio: 1 / 1; object-fit: contain; display: block; background: var(--panel); border-radius: 8px; }
+.result-figure { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: #fff; min-width: 0; }
+.result-figure-main {
+  display: block; width: 100%; padding: 0; border: 0; border-radius: 8px;
+  background: var(--panel); overflow: hidden; cursor: zoom-in;
+}
+.result-figure-main:hover { background: var(--panel); }
+/* A photograph of a package is whatever shape the package is, so it is contained
+   inside a square rather than cropped: a declaration trimmed off the edge of a
+   thumbnail is a declaration the officer does not know to look for. */
+.result-figure-main img { width: 100%; aspect-ratio: 1 / 1; object-fit: contain; display: block; }
 .result-figure .empty { aspect-ratio: 1 / 1; display: grid; place-items: center; background: var(--panel); border-radius: 8px; color: var(--ink-faint); font-size: 0.85rem; }
 
 /* ================================================== declarations and checks ==== */
@@ -233,7 +241,9 @@ button.wide, .btn.wide { width: 100%; }
 .field-panel summary { cursor: pointer; color: var(--ink-strong); }
 
 .decl-table td.decl-name { font-weight: 600; color: var(--ink-strong); }
-.decl-table td.rule { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+/* A rule reference is a citation, and a citation broken across two lines stops
+   being one: "Rule 6(1)(d)" holds together or it is not a reference. */
+.decl-table td.rule { color: var(--ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .decl-table tr.open td { background: #fffdf5; }
 .decl-table tr.open.failed td { background: #fffafa; }
 .decl-table tr.open.passed td { background: #fafdfb; }
@@ -271,6 +281,10 @@ button.wide, .btn.wide { width: 100%; }
 .result-link-body b { display: block; color: var(--ink-strong); font-size: 0.9rem; font-weight: 600; }
 .result-link-body small { color: var(--ink-soft); font-size: 0.79rem; }
 .result-link::after { content: "\203A"; color: var(--ink-faint); font-size: 1.2rem; line-height: 1; }
+/* The same card, when it only states something and opens nothing. */
+.result-link.static { cursor: default; }
+.result-link.static:hover { border-color: var(--line); background: var(--paper); }
+.result-link.static::after { content: none; }
 
 .provenance { display: grid; grid-template-columns: max-content 1fr; gap: 8px 20px; font-size: 0.86rem; margin: 12px 0; }
 .provenance dt { color: var(--ink-soft); }
@@ -310,7 +324,7 @@ button.wide, .btn.wide { width: 100%; }
   width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 8px;
   background: #fff; color: var(--ink-soft); flex-shrink: 0;
 }
-.ev-nav-btn:disabled { background: #fff; color: var(--ink-faint); opacity: .5; }
+.ev-nav-btn:disabled { background: #fff; color: var(--ink-faint); border-color: var(--line); opacity: .5; }
 
 .ev-backdrop { position: fixed; inset: 0; background: var(--paper); z-index: 80; overflow: auto; }
 .ev-shell { max-width: 1160px; margin: 0 auto; padding: 24px 30px 40px; }

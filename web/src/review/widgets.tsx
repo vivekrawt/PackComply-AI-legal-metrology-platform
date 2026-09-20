@@ -200,8 +200,14 @@ export function MonthlyThroughput({ data }: {
           {rows.map((r) => (
             <div className="rv-bar-col" key={r.month}>
               <div className="rv-bar-stack" title={`${r.month}: ${r.total} opened, ${r.decided} decided`}>
-                <span className="rv-bar-decided" style={{ height: `${(r.decided / top) * 100}%` }} />
-                <span className="rv-bar-open" style={{ height: `${((r.total - r.decided) / top) * 100}%` }} />
+                {/* A segment worth nothing draws nothing: its 2px minimum would
+                    otherwise read as a quantity that is not there. */}
+                {r.decided > 0 && (
+                  <span className="rv-bar-decided" style={{ height: `${(r.decided / top) * 100}%` }} />
+                )}
+                {r.total - r.decided > 0 && (
+                  <span className="rv-bar-open" style={{ height: `${((r.total - r.decided) / top) * 100}%` }} />
+                )}
               </div>
             </div>
           ))}

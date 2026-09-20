@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { api, ROLE_META, type User } from '../api';
 import { AuthContext } from '../App';
 import { WhoBadge } from '../components/common';
@@ -20,8 +20,12 @@ import { ScanHistory } from './ScanHistory';
 
 export function ScanShell({ user }: { user: User }) {
   const nav = useNavigate();
+  const { pathname } = useLocation();
   const { refresh } = React.useContext(AuthContext);
   const logout = async () => { await api.post('/auth/logout'); refresh(); nav('/'); };
+  // Capturing a package and reading its result are both "Scan", so the tab stays
+  // lit for the whole flow rather than going dark the moment the officer starts.
+  const onScan = !pathname.startsWith('/app/history');
 
   return (
     <div className="field-app">
@@ -32,7 +36,8 @@ export function ScanShell({ user }: { user: User }) {
         </NavLink>
 
         <nav className="pc-tabs" aria-label="Main">
-          <NavLink to="/app" end>Scan</NavLink>
+          <NavLink to="/app" end className={onScan ? 'active' : undefined}
+            aria-current={onScan ? 'page' : undefined}>Scan</NavLink>
           <NavLink to="/app/history">History</NavLink>
         </nav>
 

@@ -56,6 +56,10 @@
 }
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; height: 100%; }
+/* No webfont is loaded. The server serves this app under a CSP that allows styles
+   from 'self' only, and the product is used offline in shops — a face fetched from
+   a third party would be blocked in production and absent in the field, so the
+   stack is the platform's own UI face, with Inter picked up when it is installed. */
 body {
   font-family: Inter, "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
     "Noto Sans", "Noto Sans Devanagari", sans-serif;
@@ -83,7 +87,10 @@ h1, h2, h3 { color: var(--ink-strong); letter-spacing: -0.015em; }
 .pc-avatar.lg { width: 62px; height: 62px; font-size: 1.25rem; background: var(--blue-50); color: var(--blue); }
 .pc-who { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .pc-who-text { min-width: 0; line-height: 1.25; }
-.pc-who-text b { display: block; font-size: 0.86rem; color: var(--ink-strong); font-weight: 600; }
+.pc-who-text b {
+  display: block; font-size: 0.86rem; color: var(--ink-strong); font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .pc-who-text small { display: block; font-size: 0.76rem; color: var(--ink-soft); }
 
 /* ------------------------------------------------------------------- layout */
@@ -142,6 +149,7 @@ table.data tbody tr:last-child td { border-bottom: 0; }
 table.data tr:hover td { background: #f8fafd; }
 table.data tr.clickable { cursor: pointer; }
 table.data td.num, table.data th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.data td.nowrap, table.data th.nowrap { white-space: nowrap; }
 table.data a { font-weight: 600; }
 /* The row-opens-something affordance. */
 td.go, th.go { width: 44px; text-align: right; color: var(--ink-faint); }
@@ -217,6 +225,7 @@ button.quiet:disabled, button.secondary:disabled { background: #fff; border-colo
 .link-btn {
   background: none; border: 0; padding: 0; color: var(--blue); font-weight: 600;
   font-size: 0.875rem; cursor: pointer; display: inline-flex; align-items: center; gap: 7px;
+  white-space: nowrap;
 }
 .link-btn:hover { background: none; text-decoration: underline; }
 
@@ -317,7 +326,8 @@ button.quiet:disabled, button.secondary:disabled { background: #fff; border-colo
 .empty-state p { margin: 0; color: var(--ink-soft); font-size: 0.875rem; }
 
 /* ------------------------------------------------------------------ stepper */
-.pc-steps { display: flex; align-items: center; margin: 26px 0 0; }
+/* The numbers are drawn, so the list must not also number itself. */
+.pc-steps { display: flex; align-items: center; margin: 26px 0 0; padding: 0; list-style: none; }
 .pc-step { display: flex; align-items: center; gap: 13px; }
 .pc-step-num {
   width: 34px; height: 34px; border-radius: 50%; background: var(--slate-bg); color: var(--ink-soft);
