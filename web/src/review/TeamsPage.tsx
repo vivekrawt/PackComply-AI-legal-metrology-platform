@@ -2,7 +2,8 @@ import React from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type ScanStats, type TeamRow } from '../api';
 import { AuthContext } from '../App';
-import { ErrorText, useAsync } from '../components/common';
+import { Avatar, ErrorText, Modal, useAsync } from '../components/common';
+import { IconArchive, IconPencil, IconPlus } from '../components/icons';
 import { MagnitudeBar, StatTiles, StatusChip, scanStatTiles } from './widgets';
 
 // Teams — the unit an admin reviews and an auditor works in.
@@ -12,6 +13,7 @@ import { MagnitudeBar, StatTiles, StatusChip, scanStatTiles } from './widgets';
 // will do before it does it.
 
 export function TeamsList() {
+  const nav = useNavigate();
   const { can } = React.useContext(AuthContext);
   const teams = useAsync(() => api.get<{ teams: TeamRow[] }>('/performance/teams'), []);
   const [creating, setCreating] = React.useState(false);
@@ -21,8 +23,8 @@ export function TeamsList() {
   const max = Math.max(...rows.map((t) => t.stats.total), 1);
   const mayManage = can('team.manage');
 
-  const create = async (e: React.FormEvent) => {
-    e.preventDefault(); setError(null);
+  const create = async (e?: React.FormEvent) => {
+    e?.preventDefault(); setError(null);
     try {
       await api.post('/teams', { name: form.name, description: form.description || undefined });
       setForm({ name: '', description: '' }); setCreating(false); teams.reload();
@@ -34,13 +36,11 @@ export function TeamsList() {
       <header className="rv-head">
         <div>
           <h1>Teams</h1>
-          <p>Each team has its own admins, its own auditors and its own queue.</p>
+          <p>Manage who captures and reviews each team&rsquo;s work.</p>
         </div>
         {mayManage && (
           <div className="rv-head-actions">
-            <button className="primary" onClick={() => setCreating(!creating)}>
-              {creating ? 'Cancel' : '＋ New team'}
-            </button>
+            <button className="primary" onClick={() => setCreating(true)}><IconPlus />New team</button>
           </div>
         )}
       </header>
@@ -48,61 +48,88 @@ export function TeamsList() {
       <div className="rv-body">
         <ErrorText error={teams.error} />
 
-        {creating && mayManage && (
-          <form className="rv-panel" onSubmit={create}>
-            <h2>New team</h2>
-            <label className="field">Name
-              <input required value={form.name} maxLength={120}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="e.g. Nashik Field Team" />
-            </label>
-            <label className="field">Description <span className="optional">(optional)</span>
-              <input value={form.description} maxLength={600}
-                onChange={(e) => setForm({ ...form, description: e.target.value })} />
-            </label>
-            <ErrorText error={error} />
-            <button className="primary" disabled={!form.name.trim()}>Create team</button>
-          </form>
-        )}
-
         {rows.length === 0 && !teams.loading && (
           <div className="rv-empty">
-            <b>No teams yet</b>
-            <p>Create a team, then assign an admin and the auditors who report to them.</p>
+            <div>
+              <b>No teams yet</b>
+              <p>Create a team, then assign an admin and the auditors who report to them.</p>
+            </div>
           </div>
         )}
 
-        <ul className="rv-queue">
-          {rows.map((t) => (
-            <li key={t.id}>
-              <Link to={`/app/teams/${t.id}`} className="rv-row">
-                <span className="rv-row-main">
-                  <b>{t.name}</b>
-                  <span className="rv-row-meta">
-                    <span>{t.adminCount} admin{t.adminCount === 1 ? '' : 's'}</span>
-                    <span className="sep">·</span>
-                    <span>{t.auditorCount} auditor{t.auditorCount === 1 ? '' : 's'}</span>
-                    {t.status === 'archived' && <><span className="sep">·</span><span>archived</span></>}
-                  </span>
-                  <MagnitudeBar value={t.stats.total} max={max} />
-                </span>
-                <span className="rv-row-end">
-                  {t.adminCount === 0 && t.status === 'active' && (
-                    <span className="rv-badge rejected" title="Nothing in this team will be reviewed">
-                      ! No admin
-                    </span>
-                  )}
-                  <span className="rv-mini-stats">
-                    <span><b>{t.stats.total}</b> cases</span>
-                    <span><b>{t.stats.awaitingReview}</b> awaiting</span>
-                  </span>
-                  <span className="rv-row-go" aria-hidden="true">→</span>
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
+        {rows.length > 0 && (
+          <div className="table-wrap">
+            <div className="table-scroll">
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th>Team</th><th className="num">Admins</th><th className="num">Auditors</th>
+                    <th className="num">Cases</th><th className="num">Awaiting</th><th>Status</th>
+                    <th className="go"><span className="sr-only">Open</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((t) => (
+                    <tr key={t.id} className="clickable" onClick={() => nav(`/app/teams/${t.id}`)}>
+                      <td>
+                        <Link className="row-link" to={`/app/teams/${t.id}`} onClick={(e) => e.stopPropagation()}>
+                          {t.name}
+                        </Link>
+                        {/* A team nobody reviews is a team whose work stops here. */}
+                        {t.adminCount === 0 && t.status === 'active' && (
+                          <span className="cell-sub" style={{ color: 'var(--red-ink)' }}>
+                            No admin — nothing this team captures will be reviewed
+                          </span>
+                        )}
+                        <MagnitudeBar value={t.stats.total} max={max} />
+                      </td>
+                      <td className="num">{t.adminCount}</td>
+                      <td className="num">{t.auditorCount}</td>
+                      <td className="num">{t.stats.total}</td>
+                      <td className="num">{t.stats.awaitingReview}</td>
+                      <td>
+                        <span className={`chip ${t.status === 'active' ? 'passed' : 'neutral'}`}>
+                          <span className="ico" aria-hidden="true">{t.status === 'active' ? '✓' : '—'}</span>
+                          {t.status === 'active' ? 'Active' : 'Archived'}
+                        </span>
+                      </td>
+                      <td className="go" />
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        <p className="note-line left">Each team has one reviewing admin.</p>
       </div>
+
+      {creating && mayManage && (
+        <Modal
+          title="New team" onClose={() => setCreating(false)}
+          footer={
+            <>
+              <button className="quiet" onClick={() => setCreating(false)}>Cancel</button>
+              <button className="primary" disabled={!form.name.trim()} onClick={() => create()}>Create team</button>
+            </>
+          }
+        >
+          <form onSubmit={create}>
+            <label className="field">Name
+              <input required autoFocus value={form.name} maxLength={120}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="Team name" />
+            </label>
+            <label className="field">Description <span className="optional">(optional)</span>
+              <textarea value={form.description} maxLength={600}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="What this team covers" />
+            </label>
+            <ErrorText error={error} />
+          </form>
+        </Modal>
+      )}
     </>
   );
 }
@@ -152,7 +179,11 @@ export function TeamDetail() {
     <>
       <header className="rv-head">
         <div>
-          <button className="rv-back" onClick={() => nav('/app/teams')}>← Teams</button>
+          <nav className="rv-crumbs" aria-label="Breadcrumb">
+            <Link to="/app/teams">Teams</Link>
+            <span className="sep" aria-hidden="true">/</span>
+            <span>{d.team.name}</span>
+          </nav>
           <h1>{d.team.name}</h1>
           <p>
             {d.team.description || 'No description.'}
@@ -161,17 +192,15 @@ export function TeamDetail() {
         </div>
         {mayManage && (
           <div className="rv-head-actions">
-            <button className="secondary" onClick={() => setEditing(!editing)}>
-              {editing ? 'Cancel' : '✎ Rename'}
-            </button>
+            <button className="secondary" onClick={() => setEditing(true)}><IconPencil />Rename</button>
             {d.team.status === 'active' ? (
-              <button className="danger" onClick={act(async () => {
+              <button className="secondary" onClick={act(async () => {
                 if (!window.confirm(
                   `Archive "${d.team.name}"?\n\nIt must have no members. Archived teams keep their `
                   + 'casework and history; they simply stop receiving new work.',
                 )) return;
                 await api.patch(`/teams/${id}`, { status: 'archived' });
-              })}>Archive</button>
+              })}><IconArchive />Archive</button>
             ) : (
               <button className="secondary" onClick={act(() => api.patch(`/teams/${id}`, { status: 'active' }))}>
                 Reactivate
@@ -184,49 +213,29 @@ export function TeamDetail() {
       <div className="rv-body">
         <ErrorText error={error} />
 
-        {editing && mayManage && (
-          <form className="rv-panel" onSubmit={(e) => { e.preventDefault(); act(async () => {
-            await api.patch(`/teams/${id}`, { name: form.name, description: form.description });
-            setEditing(false);
-          })(); }}>
-            <label className="field">Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
-            <label className="field">Description<input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
-            <button className="primary">Save</button>
-          </form>
-        )}
-
         <StatTiles tiles={scanStatTiles(d.stats)} />
 
-        <div className="rv-two-col">
-          <MemberPanel
-            title="Admin"
-            blurb="One per team — they review everything this team captures."
-            people={d.admins}
-            emptyWarning="Nothing this team captures will be reviewed until it has an admin."
-            mayManage={mayManage}
-            onRemove={(uid) => act(() => api.del(`/teams/${id}/members/${uid}`))()}
-            linkBase="/app/admins"
-          />
-          <MemberPanel
-            title="Auditors"
-            blurb="They capture and check packages in the field."
-            people={d.auditors}
-            mayManage={mayManage}
-            onRemove={(uid) => act(() => api.del(`/teams/${id}/members/${uid}`))()}
-            linkBase="/app/auditors"
-          />
-        </div>
+        <h2 className="rv-section-title">Members</h2>
+        <MemberTable
+          title="Admin" people={d.admins} mayManage={mayManage} linkBase="/app/admins"
+          emptyWarning="Nothing this team captures will be reviewed until it has an admin."
+          onRemove={(uid) => act(() => api.del(`/teams/${id}/members/${uid}`))()}
+        />
+        <MemberTable
+          title="Auditors" people={d.auditors} mayManage={mayManage} linkBase="/app/auditors"
+          onRemove={(uid) => act(() => api.del(`/teams/${id}/members/${uid}`))()}
+        />
 
         {mayManage && (
           <section className="rv-panel">
             <h2>Add someone to this team</h2>
             <p className="muted rv-sub">
-              Moving a person here changes whose queue their work reaches. Their existing cases
-              stay with the team that owned them. A team takes one admin — move the sitting one
-              off first to replace them.
+              Moving someone changes their future review queue. Existing cases stay with their
+              current team.
             </p>
             <div className="btn-row">
-              <select value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Person to add">
+              <select value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Person to add"
+                style={{ flex: 1, minWidth: 240, padding: '10px 13px', borderRadius: 8, border: '1px solid var(--line)' }}>
                 <option value="">Choose a person…</option>
                 {outsiders.map((u: any) => (
                   <option key={u.id} value={u.id}>
@@ -244,45 +253,80 @@ export function TeamDetail() {
           </section>
         )}
 
-        <p className="rv-note">
-          Compliance rules assigned per team are a planned capability — today every team is
-          assessed against the same published rule set.
-        </p>
+        <p className="note-line left">A team can have one admin.</p>
       </div>
+
+      {editing && mayManage && (
+        <Modal
+          title="Rename team" onClose={() => setEditing(false)}
+          footer={
+            <>
+              <button className="quiet" onClick={() => setEditing(false)}>Cancel</button>
+              <button className="primary" onClick={act(async () => {
+                await api.patch(`/teams/${id}`, { name: form.name, description: form.description });
+                setEditing(false);
+              })}>Save</button>
+            </>
+          }
+        >
+          <label className="field">Name
+            <input autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </label>
+          <label className="field">Description <span className="optional">(optional)</span>
+            <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+          </label>
+        </Modal>
+      )}
     </>
   );
 }
 
-function MemberPanel({ title, blurb, people, mayManage, onRemove, linkBase, emptyWarning }: {
-  title: string; blurb: string; people: any[]; mayManage: boolean;
+// Members read as a roster, not as a card list: the same four facts about each
+// person, in the same four places, whichever role they hold.
+function MemberTable({ title, people, mayManage, onRemove, linkBase, emptyWarning }: {
+  title: string; people: any[]; mayManage: boolean;
   onRemove: (id: string) => void; linkBase: string; emptyWarning?: string;
 }) {
   return (
     <section className="rv-panel">
       <h2>{title} <span className="check-count">{people.length}</span></h2>
-      <p className="muted rv-sub">{blurb}</p>
-      {people.length === 0 && (
+      {people.length === 0 ? (
         emptyWarning
-          ? <p className="warn-box">{emptyWarning}</p>
+          ? <p className="warn-box" style={{ marginBottom: 0 }}>{emptyWarning}</p>
           : <p className="muted">Nobody yet.</p>
+      ) : (
+        <div className="table-wrap">
+          <div className="table-scroll">
+            <table className="data">
+              <thead>
+                <tr><th>Name</th><th>Email</th><th>Status</th>{mayManage && <th>Action</th>}</tr>
+              </thead>
+              <tbody>
+                {people.map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+                        <Avatar name={p.name} />
+                        <Link to={`${linkBase}/${p.id}`}>{p.name}</Link>
+                      </span>
+                    </td>
+                    <td className="muted">{p.email}</td>
+                    <td><StatusChip status={p.status} /></td>
+                    {mayManage && (
+                      <td>
+                        <button className="link-btn" onClick={() => onRemove(p.id)}
+                          title="Remove from this team; they keep their account but land in no queue">
+                          Remove
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
-      <ul className="rv-people">
-        {people.map((p) => (
-          <li key={p.id}>
-            <Link to={`${linkBase}/${p.id}`}>
-              <b>{p.name}</b>
-              <small>{p.email}</small>
-            </Link>
-            <StatusChip status={p.status} />
-            {mayManage && (
-              <button className="quiet" onClick={() => onRemove(p.id)}
-                title="Remove from this team; they keep their account but land in no queue">
-                Remove
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
     </section>
   );
 }

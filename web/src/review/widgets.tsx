@@ -101,6 +101,44 @@ export function PeriodPanel({ periods, detail }: { periods: AuditorPeriods; deta
   );
 }
 
+// Row actions, folded into one control.
+//
+// A people table carries three or four verbs per row — open, suspend, delete —
+// and spelling them all out turns every row into a control panel. Folded away,
+// the row is a person again, and the destructive verb is one deliberate step
+// further from the pointer than the safe one.
+export function RowMenu({ label, children }: { label: string; children: React.ReactNode }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', key); };
+  }, [open]);
+
+  return (
+    <div className="rv-menu" ref={ref} onClick={(e) => e.stopPropagation()}>
+      <button
+        className="rv-menu-btn" aria-haspopup="menu" aria-expanded={open}
+        aria-label={label} onClick={() => setOpen(!open)}
+      >
+        •••
+      </button>
+      {open && (
+        <div className="rv-menu-list" role="menu" onClick={() => setOpen(false)}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // A magnitude bar for a table row. One hue, always beside its own number, so the
 // bar is a reading aid and never the only way to get the value.
 export function MagnitudeBar({ value, max }: { value: number; max: number }) {
