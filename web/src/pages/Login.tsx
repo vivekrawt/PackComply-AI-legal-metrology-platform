@@ -4,23 +4,28 @@ import { api } from '../api';
 import { AuthContext } from '../App';
 import { t } from '../i18n';
 import { ErrorText } from '../components/common';
+import { ShieldMark } from '../components/icons';
 
 // Demo quick sign-in: one click per seeded role account. These accounts exist
 // only in the seeded demo data; a real deployment uses SSO/local accounts and
 // this panel would be removed.
+//
+// Each button says what that role can actually do, because the three roles are the
+// product's segregation of duties and picking one is picking which application you
+// are about to see.
 const DEMO_PASSWORD = 'PackComply#2026';
 const DEMO_ACCOUNTS = [
   {
-    label: 'User — field officer', email: 'user@demo.gov.example',
-    hint: 'Uses the product: open a case, capture the package, run the compliance check, correct declarations.',
+    label: 'Field officer', email: 'user@demo.gov.example',
+    hint: 'Captures packages, runs the compliance check, sends scans for approval.',
   },
   {
-    label: 'Admin — reviewer', email: 'admin@demo.gov.example',
-    hint: 'Reviews the work only: dispose findings, approve overrides, finalize reports, issue notices, read the audit log.',
+    label: 'Reviewer (admin)', email: 'admin@demo.gov.example',
+    hint: 'Signs off their own team’s work: accept, reject, send back or refer upward.',
   },
   {
     label: 'Super administrator', email: 'superadmin@demo.gov.example',
-    hint: 'Full write and delete: rule publication, user and configuration administration, record deletion.',
+    hint: 'Runs the organization: teams, people, rules, deleted records and the audit trail.',
   },
 ];
 
@@ -43,33 +48,38 @@ export function Login() {
   };
 
   return (
-    <div className="landing" style={{ display: 'grid', placeItems: 'center', padding: '24px 0' }}>
-      <div className="card" style={{ width: 440, maxWidth: '94vw' }}>
-        <h2>{t('login.title')}</h2>
-        <p className="muted" style={{ marginTop: 0 }}>Demo environment — pick a role to sign in with one click:</p>
+    <div className="auth-page">
+      <div className="auth-card">
+        <div className="auth-brand">
+          <span className="auth-logo" aria-hidden="true"><ShieldMark size={24} /></span>
+          <div>
+            <b>PackComply</b>
+            <small>Legal Metrology compliance checks</small>
+          </div>
+        </div>
 
-        <div style={{ display: 'grid', gap: 8 }}>
+        <h1>{t('login.title')}</h1>
+        <p className="auth-sub">Demo environment — choose the role you want to sign in as.</p>
+
+        <div className="role-picker">
           {DEMO_ACCOUNTS.map((a) => (
-            <button key={a.email} className="secondary" disabled={busy !== null}
-              style={{ textAlign: 'left', display: 'block', width: '100%' }}
+            <button key={a.email} className="role-btn" disabled={busy !== null}
               onClick={() => doLogin(a.email, DEMO_PASSWORD, a.email)}>
-              {busy === a.email ? '⟳ Signing in…' : `Sign in as ${a.label}`}
-              <span className="muted" style={{ display: 'block', fontWeight: 400, fontSize: '0.78rem' }}>{a.hint}</span>
+              {busy === a.email ? 'Signing in…' : a.label}
+              <small>{a.hint}</small>
             </button>
           ))}
         </div>
 
         <ErrorText error={error} />
 
-        <p style={{ marginTop: 14 }}>
-          <button className="quiet" onClick={() => setShowForm(!showForm)} aria-expanded={showForm}>
-            {showForm ? 'Hide' : 'Use'} e-mail &amp; password instead
+        <div className="auth-divider" style={{ margin: '20px 0 16px' }}>or</div>
+
+        {!showForm ? (
+          <button className="quiet wide" onClick={() => setShowForm(true)} aria-expanded={false}>
+            Use e-mail &amp; password
           </button>
-        </p>
-        <p className="auth-alt" style={{ textAlign: 'left', marginTop: 4 }}>
-          No account yet? <Link to="/">Create one</Link>
-        </p>
-        {showForm && (
+        ) : (
           <form onSubmit={(e) => { e.preventDefault(); doLogin(email, password, 'form'); }}>
             <label className="field">{t('login.email')}
               <input type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -77,9 +87,13 @@ export function Login() {
             <label className="field">{t('login.password')}
               <input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
             </label>
-            <button className="primary" disabled={busy !== null} style={{ width: '100%', marginTop: 8 }}>{t('login.submit')}</button>
+            <button className="primary big" disabled={busy !== null}>{t('login.submit')}</button>
           </form>
         )}
+
+        <p className="auth-alt">
+          No account yet? <Link to="/">Create one</Link>
+        </p>
       </div>
     </div>
   );
