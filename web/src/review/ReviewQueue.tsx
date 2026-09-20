@@ -60,7 +60,7 @@ const SHORT_VERDICT: Record<VerdictOverall, string> = {
   compliant: 'Ready', non_compliant: 'Not ready', needs_review: 'Needs review',
 };
 
-export function Assessment({ scan }: { scan: ScanSummary }) {
+function Assessment({ scan }: { scan: ScanSummary }) {
   const v = scan.verdict ? VERDICT_META[scan.verdict as VerdictOverall] : null;
   return (
     <span className={`chip ${v ? v.tone : 'neutral'}`}>
@@ -71,7 +71,7 @@ export function Assessment({ scan }: { scan: ScanSummary }) {
 }
 
 // Where the case stands with a human, as distinct from what the machine made of it.
-export function Decision({ scan }: { scan: ScanSummary }) {
+function Decision({ scan }: { scan: ScanSummary }) {
   if (scan.review?.stale) {
     return (
       <span className="chip not_assessable" title="Decided against an earlier analysis of this package">

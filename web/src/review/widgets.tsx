@@ -139,17 +139,6 @@ export function RowMenu({ label, children }: { label: string; children: React.Re
   );
 }
 
-// A magnitude bar for a table row. One hue, always beside its own number, so the
-// bar is a reading aid and never the only way to get the value.
-export function MagnitudeBar({ value, max }: { value: number; max: number }) {
-  const pct = max > 0 ? Math.round((value / max) * 100) : 0;
-  return (
-    <span className="rv-mag" aria-hidden="true">
-      <span className="rv-mag-fill" style={{ width: `${Math.max(pct, value > 0 ? 3 : 0)}%` }} />
-    </span>
-  );
-}
-
 export function StatusChip({ status }: { status: string }) {
   const tone = status === 'active' ? 'passed'
     : status === 'suspended' ? 'failed'

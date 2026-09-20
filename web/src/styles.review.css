@@ -196,10 +196,6 @@
 .rv-mini-stats b { color: var(--ink-strong); font-size: 0.9rem; }
 .rv-row-sub { font-size: 0.78rem; margin-top: 1px; }
 
-/* A magnitude bar is a reading aid beside its own number, never the only encoding. */
-.rv-mag { display: block; height: 4px; background: var(--slate-bg); border-radius: 999px; margin-top: 7px; max-width: 200px; overflow: hidden; }
-.rv-mag-fill { display: block; height: 100%; background: var(--blue); border-radius: 999px; }
-
 /* A row-level menu, so a table does not have to carry four buttons per row. */
 .rv-menu { position: relative; display: inline-block; }
 .rv-menu-btn {

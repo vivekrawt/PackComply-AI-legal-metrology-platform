@@ -46,8 +46,8 @@ export function ScanTable({ scans }: { scans: ScanSummary[] }) {
           <thead>
             <tr>
               <th>Product</th>
-              <th>Scanned</th>
-              <th>Images</th>
+              <th className="when">Scanned</th>
+              <th className="imgs num">Images</th>
               <th>Assessment</th>
               <th className="go">Action</th>
             </tr>
@@ -60,9 +60,15 @@ export function ScanTable({ scans }: { scans: ScanSummary[] }) {
                   <Link className="row-link" to={`/app/scan/${s.scanId}`} onClick={(e) => e.stopPropagation()}>
                     {scanTitle(s)}
                   </Link>
+                  {/* On a phone there is no room for a "Scanned" column, and a date
+                      squeezed into one wraps to four lines. It folds under the product
+                      instead — the same two facts, in the space actually available. */}
+                  <span className="cell-sub only-narrow">
+                    {when(s.createdAt)} · {s.imageCount} image{s.imageCount === 1 ? '' : 's'}
+                  </span>
                 </td>
-                <td>{when(s.createdAt)}</td>
-                <td>{s.imageCount}</td>
+                <td className="when nowrap">{when(s.createdAt)}</td>
+                <td className="imgs num">{s.imageCount}</td>
                 <td><AssessmentCell scan={s} /></td>
                 <td className="go" />
               </tr>
