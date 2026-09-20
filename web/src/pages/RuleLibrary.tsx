@@ -1,10 +1,16 @@
 import React from 'react';
 import { api } from '../api';
 import { usePerm } from '../App';
-import { ErrorText, LegalFlag, Section, useAsync } from '../components/common';
+import { ErrorText, LegalFlag, useAsync } from '../components/common';
+import { IconCalendar, IconDoc, IconPlus } from '../components/icons';
 
 // Legal rule library + governance workbench (ADM-01). Draft → test → submit →
 // independent approve → publish → rollback; published versions are immutable.
+//
+// The banner at the top is the whole point of the screen: "published" is a state of
+// this system, and it is not the same thing as "legally approved". Anything that
+// blurred the two would be the single most dangerous piece of UI in the product.
+
 export function RuleLibrary() {
   // Rule authoring is a super_admin permission; every other role gets the read-only view.
   const can = usePerm();
@@ -15,7 +21,7 @@ export function RuleLibrary() {
   const [sel, setSel] = React.useState<any>(null);
   const [testResult, setTestResult] = React.useState<any>(null);
   const [error, setError] = React.useState<unknown>(null);
-  const [showDraft, setShowDraft] = React.useState(false);
+  const [drafting, setDrafting] = React.useState(false);
 
   const act = (fn: () => Promise<unknown>) => async () => {
     setError(null);
@@ -28,45 +34,93 @@ export function RuleLibrary() {
 
   const statusChip = (s: string) => (
     <span className={`chip ${s === 'published' ? 'passed' : s === 'retired' ? 'not_applicable' : 'needs_review'}`}>
-      <span className="ico">{s === 'published' ? '✓' : s === 'retired' ? '—' : '…'}</span>{s}
+      <span className="ico" aria-hidden="true">{s === 'published' ? '✓' : s === 'retired' ? '—' : '…'}</span>
+      {s.charAt(0).toUpperCase() + s.slice(1)}
     </span>
   );
 
+  if (drafting && isAdmin) {
+    return (
+      <DraftForm
+        sets={sets.data?.ruleSets ?? []}
+        onCancel={() => setDrafting(false)}
+        onDone={() => { setDrafting(false); versions.reload(); }}
+      />
+    );
+  }
+
+  const needsLegal = dash.data?.requiresLegal?.length ?? 0;
+
   return (
     <>
-      <div className="topbar"><h1>Legal rule library</h1>
-        <span className="who">{isAdmin ? 'rule administration enabled (maker-checker enforced)' : 'read-only view'}</span>
+      <div className="topbar">
+        <div>
+          <h1>Legal rule library</h1>
+          <p className="muted">{isAdmin ? 'Administration — maker-checker enforced' : 'Read-only view'}</p>
+        </div>
+        {isAdmin && (
+          <div className="rv-head-actions">
+            <button className="primary" onClick={() => setDrafting(true)}><IconPlus />New draft</button>
+          </div>
+        )}
       </div>
+
       <div className="content">
         <ErrorText error={error} />
-        {dash.data?.requiresLegal?.length > 0 && (
-          <p className="warn-box">⚠ {dash.data.requiresLegal.length} published rule version(s) carry placeholder parameters marked <b>REQUIRES LEGAL APPROVAL</b>. Certify sources and thresholds with the legal domain owner before enforcement use.</p>
+
+        {needsLegal > 0 && (
+          <p className="warn-box">
+            <b>{needsLegal} published version{needsLegal === 1 ? '' : 's'} require legal approval.</b>{' '}
+            Placeholder parameters are not certified for enforcement.
+            <br />
+            <small>Important: published does not equal legally approved.</small>
+          </p>
         )}
 
-        <Section title="Rule versions" actions={isAdmin && <button className="primary" onClick={() => setShowDraft(!showDraft)}>＋ New draft version</button>}>
-          {showDraft && isAdmin && <DraftForm sets={sets.data?.ruleSets ?? []} onDone={() => { setShowDraft(false); versions.reload(); }} />}
-          <table className="data">
-            <thead><tr><th>Rule</th><th>Version</th><th>Status</th><th>Effective</th><th>Citation</th><th>Legal</th><th></th></tr></thead>
-            <tbody>
-              {versions.data?.versions?.map((v: any) => (
-                <tr key={v.id} className="clickable" onClick={() => { setSel(v); setTestResult(null); }}>
-                  <td><b>{v.title}</b><div className="mono muted">{v.ruleKey}</div></td>
-                  <td>v{v.version}</td>
-                  <td>{statusChip(v.status)}</td>
-                  <td className="muted">{v.effectiveFrom} → {v.effectiveTo ?? 'open'}</td>
-                  <td className="muted">{v.citation.slice(0, 60)}…</td>
-                  <td><LegalFlag status={v.legalStatus} /></td>
-                  <td><button className="quiet" onClick={(e) => { e.stopPropagation(); runTests(v); setSel(v); }}>▶ tests</button></td>
+        <div className="table-wrap">
+          <div className="table-scroll">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>Rule</th><th>Version</th><th>Status</th><th>Effective</th>
+                  <th>Legal status</th><th>Tests</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </Section>
+              </thead>
+              <tbody>
+                {versions.data?.versions?.map((v: any) => (
+                  <tr key={v.id} className="clickable" onClick={() => { setSel(v); setTestResult(null); }}>
+                    <td>
+                      <b>{v.title}</b>
+                      <span className="cell-sub mono">{v.ruleKey}</span>
+                    </td>
+                    <td>v{v.version}</td>
+                    <td>{statusChip(v.status)}</td>
+                    <td className="muted nowrap">{v.effectiveFrom}{v.effectiveTo ? ` → ${v.effectiveTo}` : ''}</td>
+                    <td>
+                      {v.legalStatus === 'REQUIRES_LEGAL_APPROVAL'
+                        ? <span className="chip needs_review"><span className="ico" aria-hidden="true">!</span>Approval required</span>
+                        : <span className="chip passed"><span className="ico" aria-hidden="true">✓</span>Certified</span>}
+                    </td>
+                    <td>
+                      <button className="link-btn" onClick={(e) => { e.stopPropagation(); runTests(v); setSel(v); }}>
+                        Run tests
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
 
         {sel && (
-          <Section title={`${sel.title} — ${sel.ruleKey} v${sel.version}`} actions={
-            isAdmin && (
-              <div className="btn-row">
+          <section className="rv-panel" style={{ marginTop: 18 }}>
+            <div className="rv-panel-head">
+              <h2>{sel.title} — <span className="mono">{sel.ruleKey}</span> v{sel.version} <LegalFlag status={sel.legalStatus} /></h2>
+              <button className="link-btn" onClick={() => { setSel(null); setTestResult(null); }}>Close</button>
+            </div>
+            {isAdmin && (
+              <div className="btn-row" style={{ marginBottom: 14 }}>
                 {sel.status === 'draft' && <button className="secondary" onClick={act(() => api.post(`/rules/versions/${sel.id}/submit`))}>Submit for approval</button>}
                 {sel.status === 'submitted' && <button className="secondary" onClick={act(() => api.post(`/rules/versions/${sel.id}/approve`))}>Approve (independent approver)</button>}
                 {sel.status === 'approved' && <button className="primary" onClick={act(() => api.post(`/rules/versions/${sel.id}/publish`))}>Publish (runs regression pack)</button>}
@@ -81,53 +135,91 @@ export function RuleLibrary() {
                   })}>Delete draft</button>
                 )}
               </div>
-            )
-          }>
+            )}
+
+            <dl className="rv-facts" style={{ marginBottom: 16 }}>
+              <dt>Citation</dt><dd>{sel.citation}</dd>
+              <dt>Author</dt><dd className="mono">{sel.authorId?.slice(0, 16) ?? '—'}</dd>
+              <dt>Approver</dt><dd className="mono">{sel.approverId ? `${sel.approverId.slice(0, 16)}…` : 'pending'}</dd>
+              {sel.changeNote && <><dt>Change note</dt><dd>{sel.changeNote}</dd></>}
+            </dl>
+
             <div className="grid2">
               <div>
-                <h3>Governance</h3>
-                <p className="muted">Author {sel.authorId?.slice(0, 14)}… · approver {sel.approverId ? sel.approverId.slice(0, 14) + '…' : 'pending'} · {sel.changeNote ?? ''}</p>
-                <h3>Applicability</h3><pre className="mono" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(sel.applicability, null, 1)}</pre>
-                <h3>Outcome policy</h3><pre className="mono" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(sel.outcome, null, 1)}</pre>
+                <h3>Applicability</h3>
+                <pre className="ocr-dump">{JSON.stringify(sel.applicability, null, 1)}</pre>
+                <h3>Outcome policy</h3>
+                <pre className="ocr-dump">{JSON.stringify(sel.outcome, null, 1)}</pre>
               </div>
               <div>
                 <h3>Deterministic logic (versioned configuration)</h3>
-                <pre className="mono" style={{ whiteSpace: 'pre-wrap', background: '#f3f6fb', padding: 10, borderRadius: 6 }}>{JSON.stringify(sel.logic, null, 1)}</pre>
+                <pre className="ocr-dump">{JSON.stringify(sel.logic, null, 1)}</pre>
               </div>
             </div>
+
             {testResult && (
               <>
                 <h3>Regression test pack — {testResult.passed}/{testResult.total} passed</h3>
-                <table className="data">
-                  <thead><tr><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr></thead>
-                  <tbody>{testResult.results.map((r: any) => (
-                    <tr key={r.testId}><td>{r.name}</td><td className="mono">{r.expected}</td><td className="mono">{r.actual}</td>
-                      <td>{r.pass ? <span className="ok-text">✓ pass</span> : <span className="error-text">✕ fail</span>}</td></tr>
-                  ))}</tbody>
-                </table>
+                <div className="table-wrap">
+                  <table className="data">
+                    <thead><tr><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr></thead>
+                    <tbody>
+                      {testResult.results.map((r: any) => (
+                        <tr key={r.testId}>
+                          <td>{r.name}</td>
+                          <td className="mono">{r.expected}</td>
+                          <td className="mono">{r.actual}</td>
+                          <td>
+                            <span className={`chip ${r.pass ? 'passed' : 'failed'}`}>
+                              <span className="ico" aria-hidden="true">{r.pass ? '✓' : '✕'}</span>
+                              {r.pass ? 'Pass' : 'Fail'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </>
             )}
-          </Section>
+          </section>
         )}
 
-        <div className="grid2">
-          <Section title="Upcoming effective dates">
-            {dash.data?.upcoming?.length ? dash.data.upcoming.map((u: any) => (
-              <p key={u.rule_key + u.version} className="muted">• {u.effective_from}: {u.title} (<span className="mono">{u.rule_key} v{u.version}</span>)</p>
-            )) : <p className="muted">None scheduled.</p>}
-          </Section>
-          <Section title="Drafts in progress">
-            {dash.data?.drafts?.length ? dash.data.drafts.map((d: any) => (
-              <p key={d.rule_key + d.version} className="muted">• {d.title} — <span className="mono">{d.rule_key} v{d.version}</span> ({d.status})</p>
-            )) : <p className="muted">No open drafts.</p>}
-          </Section>
+        <div className="result-links" style={{ marginTop: 18 }}>
+          <div className="result-link static">
+            <span className="result-link-ico"><IconCalendar /></span>
+            <span className="result-link-body">
+              <b>Upcoming effective dates</b>
+              <small>
+                {dash.data?.upcoming?.length
+                  ? dash.data.upcoming.map((u: any) => `${u.effective_from}: ${u.title}`).join(' · ')
+                  : 'None scheduled'}
+              </small>
+            </span>
+          </div>
+          <div className="result-link static">
+            <span className="result-link-ico"><IconDoc /></span>
+            <span className="result-link-body">
+              <b>Drafts in progress</b>
+              <small>
+                {dash.data?.drafts?.length
+                  ? dash.data.drafts.map((d: any) => `${d.title} (${d.status})`).join(' · ')
+                  : 'No open drafts'}
+              </small>
+            </span>
+          </div>
         </div>
+
+        {!isAdmin && <p className="rv-note">Reviewers have read-only access.</p>}
       </div>
     </>
   );
 }
 
-function DraftForm({ sets, onDone }: { sets: any[]; onDone: () => void }) {
+// A draft is a screen of its own, not a form unfolding above the table it will join:
+// it asks for nine fields including three JSON documents, and publication turns on
+// an independent approver and a passing regression pack.
+function DraftForm({ sets, onDone, onCancel }: { sets: any[]; onDone: () => void; onCancel: () => void }) {
   const [error, setError] = React.useState<unknown>(null);
   const [f, setF] = React.useState({
     ruleSetId: sets[0]?.id ?? '', ruleKey: '', title: '', citation: '',
@@ -150,25 +242,71 @@ function DraftForm({ sets, onDone }: { sets: any[]; onDone: () => void }) {
       onDone();
     } catch (err) { setError(err); }
   };
+
   return (
-    <form onSubmit={submit} className="card" style={{ background: '#f8fafc' }}>
-      <div className="grid2">
-        <label className="field">Rule set
-          <select value={f.ruleSetId} onChange={(e) => set('ruleSetId', e.target.value)}>
-            {sets.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.layer})</option>)}
-          </select>
-        </label>
-        <label className="field">Rule key<input required value={f.ruleKey} onChange={(e) => set('ruleKey', e.target.value)} placeholder="lmpc.my_rule" /></label>
-        <label className="field">Title<input required value={f.title} onChange={(e) => set('title', e.target.value)} /></label>
-        <label className="field">Citation / source reference<input required value={f.citation} onChange={(e) => set('citation', e.target.value)} /></label>
-        <label className="field">Effective from<input type="date" value={f.effectiveFrom} onChange={(e) => set('effectiveFrom', e.target.value)} /></label>
+    <>
+      <div className="topbar">
+        <div>
+          <nav className="rv-crumbs" aria-label="Breadcrumb">
+            <button className="link-btn" onClick={onCancel}>Rule library</button>
+            <span className="sep" aria-hidden="true">/</span>
+            <span>New draft</span>
+          </nav>
+          <h1>New rule draft</h1>
+        </div>
       </div>
-      <label className="field">Applicability (JSON)<textarea value={f.applicability} onChange={(e) => set('applicability', e.target.value)} /></label>
-      <label className="field">Logic — checks (JSON)<textarea value={f.logic} onChange={(e) => set('logic', e.target.value)} /></label>
-      <label className="field">Outcome policy (JSON)<textarea value={f.outcome} onChange={(e) => set('outcome', e.target.value)} /></label>
-      <ErrorText error={error} />
-      <p className="muted">New drafts are created as REQUIRES LEGAL APPROVAL until the legal owner certifies parameters. Publication requires an independent approver and a passing regression pack.</p>
-      <button className="primary">Create draft</button>
-    </form>
+
+      <div className="content">
+        <p className="warn-box">
+          Drafts require legal approval. Publication needs an independent approver and passing
+          regression tests.
+        </p>
+
+        <form onSubmit={submit}>
+          <div className="rv-form-grid two">
+            <label className="field">Rule set
+              <select value={f.ruleSetId} onChange={(e) => set('ruleSetId', e.target.value)}>
+                {sets.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.layer})</option>)}
+              </select>
+            </label>
+            <label className="field">Rule key
+              <input required value={f.ruleKey} onChange={(e) => set('ruleKey', e.target.value)} placeholder="lmpc.my_rule" />
+            </label>
+            <label className="field">Title
+              <input required value={f.title} onChange={(e) => set('title', e.target.value)} />
+            </label>
+            <label className="field">Citation / source reference
+              <input required value={f.citation} onChange={(e) => set('citation', e.target.value)} />
+            </label>
+            <label className="field">Effective from
+              <input type="date" value={f.effectiveFrom} onChange={(e) => set('effectiveFrom', e.target.value)} />
+            </label>
+          </div>
+
+          <div className="rv-form-grid">
+            <label className="field">Applicability (JSON)
+              <textarea className="mono" value={f.applicability} onChange={(e) => set('applicability', e.target.value)} />
+            </label>
+            <label className="field">Checks (JSON)
+              <textarea className="mono" value={f.logic} onChange={(e) => set('logic', e.target.value)} />
+            </label>
+            <label className="field">Outcome policy (JSON)
+              <textarea className="mono" value={f.outcome} onChange={(e) => set('outcome', e.target.value)} />
+            </label>
+          </div>
+
+          <ErrorText error={error} />
+          <p className="note-line left">
+            New drafts are created as REQUIRES LEGAL APPROVAL until the legal owner certifies
+            their parameters.
+          </p>
+
+          <div className="pc-modal-foot">
+            <button type="button" className="quiet" onClick={onCancel}>Cancel</button>
+            <button className="primary">Create draft</button>
+          </div>
+        </form>
+      </div>
+    </>
   );
 }

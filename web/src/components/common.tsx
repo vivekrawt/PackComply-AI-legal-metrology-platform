@@ -1,7 +1,67 @@
 import React from 'react';
 import { OUTCOME_META } from '../api';
+import { IconClose } from './icons';
 
-// Status = text + icon + colour together (never colour alone).
+// Initials for an identity badge. Two letters at most — a longer run stops being a
+// mark and starts being unreadable text in a 38px circle.
+//
+// A parenthetical is a qualifier, not part of the name: "Asha Kulkarni (Demo
+// Inspector)" is AK, not AI.
+export function initials(name: string | null | undefined): string {
+  const parts = (name ?? '').replace(/\([^)]*\)/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+export function Avatar({ name, large }: { name: string | null | undefined; large?: boolean }) {
+  return <span className={`pc-avatar${large ? ' lg' : ''}`} aria-hidden="true">{initials(name)}</span>;
+}
+
+// Who is acting, and under what authority. Shown wherever the app is signed in,
+// because an officer should never have to remember which role they are holding.
+export function WhoBadge({ name, role, email }: { name: string; role: string; email?: string }) {
+  return (
+    <span className="pc-who">
+      <Avatar name={name} />
+      <span className="pc-who-text">
+        <b title={email}>{name}</b>
+        <small>{role}</small>
+      </span>
+    </span>
+  );
+}
+
+// A dialog that owns the screen: escape closes it, the backdrop closes it, and the
+// page behind it is inert to a pointer.
+export function Modal({ title, blurb, onClose, children, footer }: {
+  title: string; blurb?: string; onClose: () => void;
+  children: React.ReactNode; footer?: React.ReactNode;
+}) {
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="pc-backdrop" role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
+      <div className="pc-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="pc-modal-head">
+          <div>
+            <h2>{title}</h2>
+            {blurb && <p>{blurb}</p>}
+          </div>
+          <button className="pc-modal-close" onClick={onClose} aria-label="Close"><IconClose /></button>
+        </div>
+        {children}
+        {footer && <div className="pc-modal-foot">{footer}</div>}
+      </div>
+    </div>
+  );
+}
+
+// Status = a coloured dot beside the word it stands for (never colour alone).
 export function OutcomeChip({ outcome }: { outcome: string }) {
   const m = OUTCOME_META[outcome] ?? { label: outcome, icon: '·' };
   return (

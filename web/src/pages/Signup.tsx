@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../api';
 import { AuthContext } from '../App';
 import { ErrorText } from '../components/common';
+import { ShieldMark } from '../components/icons';
 
 // Entry point of the product. A new account is always a field officer; review and
 // administrative authority is granted by an existing administrator, never claimed
@@ -67,12 +68,7 @@ export function Signup() {
     <div className="auth-page">
       <div className="auth-card">
         <div className="auth-brand">
-          <span className="auth-logo" aria-hidden="true">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <path d="M12 3l7 2.5v5.2c0 4.5-3 8.2-7 9.8-4-1.6-7-5.3-7-9.8V5.5L12 3z" stroke="#fff" strokeWidth="1.8" strokeLinejoin="round" />
-              <path d="M9 11.6l2.1 2.1L15.3 9.5" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </span>
+          <span className="auth-logo" aria-hidden="true"><ShieldMark size={24} /></span>
           <div>
             <b>PackComply</b>
             <small>Legal Metrology compliance checks</small>
@@ -89,7 +85,7 @@ export function Signup() {
           <h2>Testing phase</h2>
           <p>Skip the form and go straight to scanning with a shared test account.</p>
           <button className="secondary wide" onClick={quickStart} disabled={busy}>
-            {busy ? 'Please wait…' : '⚡ One-click test account'}
+            {busy ? 'Please wait…' : 'One-click test account'}
           </button>
           <p style={{ margin: '8px 0 0' }}>
             Signs in as <code>{TEST_ACCOUNT.email}</code> · password <code>{TEST_ACCOUNT.password}</code>

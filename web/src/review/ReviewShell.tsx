@@ -2,6 +2,11 @@ import React from 'react';
 import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { api, ROLE_META, type AttentionCase, type ScanSummary, type User } from '../api';
 import { AuthContext } from '../App';
+import { WhoBadge } from '../components/common';
+import {
+  IconArrowUpRight, IconBook, IconChain, IconCheckSquare, IconGrid, IconPeople,
+  IconPerson, IconQueue, IconSignOut, IconTarget, IconTrash, ShieldMark,
+} from '../components/icons';
 import { ReviewQueue } from './ReviewQueue';
 import { ScanReview } from './ScanReview';
 import { SuperDashboard } from './SuperDashboard';
@@ -20,7 +25,7 @@ import { Trash } from '../pages/Trash';
 //   super_admin  runs the organization. Its landing page is performance across every
 //                team, admin and auditor — not a list of individual scans, which
 //                belong to the admins. It can still reach any case, and the cases
-//                that specifically need it are gathered under "Needs attention".
+//                that specifically need it are gathered under "Referred to you".
 //
 // Neither console carries the capture surface: no new inspection, no upload, no
 // camera, no calibration, no declaration editing. That is the auditor's work, and
@@ -54,88 +59,55 @@ export function ReviewShell({ user, demo, mockComponents }: {
 
   const count = (n: number | null) =>
     (n != null && n > 0 ? <span className="rv-count">{n}</span> : null);
+  const ico = (node: React.ReactNode) => <span className="rv-nav-ico">{node}</span>;
 
   return (
     <div className="rv-app">
       <nav className="rv-rail" aria-label="Main navigation">
         <NavLink to="/app" className="rv-brand" end>
-          <span className="rv-logo" aria-hidden="true">
-            <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
-              <path d="M12 3l7 2.5v5.2c0 4.5-3 8.2-7 9.8-4-1.6-7-5.3-7-9.8V5.5L12 3z" stroke="#fff" strokeWidth="1.8" strokeLinejoin="round" />
-              <path d="M9 11.6l2.1 2.1L15.3 9.5" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </span>
-          <span>
-            <b>PackComply</b>
-            <small>{isSuper ? 'Administration' : 'Reviewer console'}</small>
-          </span>
+          <span className="pc-mark"><ShieldMark /></span>
+          <b>PackComply</b>
         </NavLink>
+        <div className="rv-role">{isSuper ? 'Super administrator' : 'Reviewer'}</div>
 
         {isSuper ? (
           <>
-            <div className="rv-section">Oversight</div>
             <div className="rv-nav">
-              <NavLink to="/app" end>
-                <span className="rv-nav-ico" aria-hidden="true">◎</span>Overview
-              </NavLink>
-              <NavLink to="/app/attention">
-                <span className="rv-nav-ico" aria-hidden="true">↑</span>Referred to you{count(badge)}
-              </NavLink>
-              <NavLink to="/app/all-scans">
-                <span className="rv-nav-ico" aria-hidden="true">▤</span>All scans
-              </NavLink>
-            </div>
-
-            <div className="rv-section">Organization</div>
-            <div className="rv-nav">
-              <NavLink to="/app/teams"><span className="rv-nav-ico" aria-hidden="true">⬒</span>Teams</NavLink>
-              <NavLink to="/app/admins"><span className="rv-nav-ico" aria-hidden="true">◈</span>Admins</NavLink>
-              <NavLink to="/app/auditors"><span className="rv-nav-ico" aria-hidden="true">◍</span>Auditors</NavLink>
+              <NavLink to="/app" end>{ico(<IconTarget />)}Overview</NavLink>
+              <NavLink to="/app/attention">{ico(<IconArrowUpRight />)}Referred to you{count(badge)}</NavLink>
+              <NavLink to="/app/all-scans">{ico(<IconQueue />)}All scans</NavLink>
+              <NavLink to="/app/teams">{ico(<IconPeople />)}Teams</NavLink>
+              <NavLink to="/app/admins">{ico(<IconPerson />)}Admins</NavLink>
+              <NavLink to="/app/auditors">{ico(<IconPeople />)}Auditors</NavLink>
             </div>
           </>
         ) : (
-          <>
-            <div className="rv-section">Review</div>
-            <div className="rv-nav">
-              <NavLink to="/app" end>
-                <span className="rv-nav-ico" aria-hidden="true">▤</span>Review queue{count(badge)}
-              </NavLink>
-              <NavLink to="/app/signed-off">
-                <span className="rv-nav-ico" aria-hidden="true">✓</span>Signed off
-              </NavLink>
-              <NavLink to="/app/my-team">
-                <span className="rv-nav-ico" aria-hidden="true">◍</span>My team
-              </NavLink>
-            </div>
-          </>
+          <div className="rv-nav">
+            <NavLink to="/app" end>{ico(<IconQueue />)}Review queue{count(badge)}</NavLink>
+            <NavLink to="/app/signed-off">{ico(<IconCheckSquare />)}Signed off</NavLink>
+            <NavLink to="/app/my-team">{ico(<IconPeople />)}My team</NavLink>
+          </div>
         )}
 
         <div className="rv-section">Governance</div>
         <div className="rv-nav">
-          {can('rule.read') && (
-            <NavLink to="/app/rules"><span className="rv-nav-ico" aria-hidden="true">§</span>Rule library</NavLink>
-          )}
-          {can('inspection.delete') && (
-            <NavLink to="/app/deleted"><span className="rv-nav-ico" aria-hidden="true">⌫</span>Deleted records</NavLink>
-          )}
-          {can('audit.read') && (
-            <NavLink to="/app/audit"><span className="rv-nav-ico" aria-hidden="true">⛓</span>Audit trail</NavLink>
-          )}
+          {can('rule.read') && <NavLink to="/app/rules">{ico(<IconBook />)}Rule library</NavLink>}
+          {can('inspection.delete') && <NavLink to="/app/deleted">{ico(<IconTrash />)}Deleted records</NavLink>}
+          {can('audit.read') && <NavLink to="/app/audit">{ico(<IconChain />)}Audit trail</NavLink>}
         </div>
 
         <div className="rv-spacer" />
         <div className="rv-who">
-          <b title={user.email}>{user.name}</b>
-          <small>{ROLE_META[user.role]?.short ?? user.role}</small>
-          <button className="quiet" onClick={logout}>Sign out</button>
+          <WhoBadge name={user.name} role={ROLE_META[user.role]?.short ?? user.role} email={user.email} />
+          <button className="rv-signout" onClick={logout}><IconSignOut />Sign out</button>
         </div>
       </nav>
 
       <div className="rv-main">
         {demo && (
           <div className="demo-banner" role="note">
-            ◌ DEMO PROVIDERS ACTIVE for {mockComponents.length ? mockComponents.join(', ') : 'some components'} —
-            these outputs are deterministic mocks, not production AI.
+            Demo environment · {mockComponents.length ? mockComponents.join(', ') : 'some processing'} uses
+            simulated providers — these outputs are deterministic mocks, not production AI.
           </div>
         )}
         <Routes>

@@ -1,8 +1,9 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api, type AttentionCase, type OrgOverview } from '../api';
 import { ErrorText, useAsync } from '../components/common';
-import { MonthlyThroughput, StatTiles, fmtWhen } from './widgets';
+import { IconPause, IconPeople, IconPerson } from '../components/icons';
+import { MonthlyThroughput, StatTiles } from './widgets';
 
 // The super administrator's landing page.
 //
@@ -16,18 +17,20 @@ import { MonthlyThroughput, StatTiles, fmtWhen } from './widgets';
 // what has actually been referred up.
 
 export function SuperDashboard() {
+  const nav = useNavigate();
   const overview = useAsync(() => api.get<OrgOverview>('/performance/overview'), []);
   const attention = useAsync(() => api.get<{ cases: AttentionCase[] }>('/performance/attention'), []);
 
   const o = overview.data;
   const cases = attention.data?.cases ?? [];
+  const first = cases[0];
 
   return (
     <>
       <header className="rv-head">
         <div>
           <h1>Organization overview</h1>
-          <p>Compliance throughput across every team, and the cases waiting on you.</p>
+          <p>Cases, people and activity across your organization.</p>
         </div>
       </header>
 
@@ -40,62 +43,50 @@ export function SuperDashboard() {
             <StatTiles tiles={[
               { label: 'Cases', value: o.scans.total },
               { label: 'In progress', value: o.scans.inProgress, hint: 'Auditors still capturing or analysing' },
-              { label: 'Referred to you', value: o.attention, tone: o.attention > 0 ? 'bad' : undefined },
+              { label: 'Referred', value: o.attention, tone: o.attention > 0 ? 'bad' : undefined, hint: 'Referred to you by an admin' },
               { label: 'Accepted', value: o.scans.accepted, tone: 'ok' },
               { label: 'Rejected', value: o.scans.rejected, tone: 'bad' },
               { label: 'Sent back', value: o.scans.sentBack, tone: 'warn' },
             ]} />
 
-            {cases.length > 0 && (
-              <section className="rv-panel rv-alert">
-                <h2>
-                  {cases.length} case{cases.length === 1 ? '' : 's'} referred to you
-                </h2>
-                <p className="muted">
-                  An admin judged each of these beyond their authority to settle. Only your
-                  decision clears them.
-                </p>
-                <ul className="rv-attention">
-                  {cases.slice(0, 4).map((c) => (
-                    <li key={c.scanId}>
-                      <span className="rv-badge escalated">↑ Awaiting you</span>
-                      <Link to={`/app/scan/${c.scanId}`}>{c.product ?? 'Unnamed product'}</Link>
-                      <small>
-                        {c.escalatedBy ?? 'An admin'} · {c.teamName ?? 'No team'} ·{' '}
-                        {fmtWhen(c.escalatedAt)} — &ldquo;{c.escalationReason}&rdquo;
-                      </small>
-                    </li>
-                  ))}
-                </ul>
-                {cases.length > 4 && (
-                  <Link className="btn secondary" to="/app/attention">
-                    See all {cases.length} →
-                  </Link>
-                )}
-              </section>
+            {/* Nothing reaches this callout because the system found it interesting.
+                Every case in it is a named admin asking for a decision. */}
+            {first && (
+              <div className="rv-callout">
+                <span className="rv-callout-ico" aria-hidden="true">i</span>
+                <div className="rv-callout-body">
+                  <b>
+                    {cases.length} case{cases.length === 1 ? '' : 's'} need
+                    {cases.length === 1 ? 's' : ''} your decision
+                  </b>
+                  <small>
+                    {first.product ?? 'Unnamed product'} · {first.teamName ?? 'No team'} ·{' '}
+                    {first.escalatedBy ?? 'an admin'}
+                    {cases.length > 1 ? ` · and ${cases.length - 1} more` : ''}
+                  </small>
+                </div>
+                <button className="primary" onClick={() => nav(cases.length > 1 ? '/app/attention' : `/app/scan/${first.scanId}`)}>
+                  {cases.length > 1 ? 'See all' : 'Review case'}
+                </button>
+              </div>
             )}
 
-            <div className="rv-two-col">
-              <section className="rv-panel">
-                <h2>Casework opened per month</h2>
-                <MonthlyThroughput data={o.byMonth} />
-              </section>
+            <h2 className="rv-section-title">People and teams</h2>
+            <StatTiles tiles={[
+              { label: 'team', value: o.teams.active, icon: <IconPeople size={20} /> },
+              { label: 'admins', value: o.people.admins, icon: <IconPerson size={20} /> },
+              { label: 'auditors', value: o.people.auditors, icon: <IconPeople size={20} /> },
+              { label: 'suspended', value: o.people.suspended, icon: <IconPause size={20} />, tone: o.people.suspended > 0 ? 'warn' : undefined },
+            ]} />
 
-              <section className="rv-panel">
-                <h2>People and teams</h2>
-                <StatTiles tiles={[
-                  { label: 'Teams', value: o.teams.active },
-                  { label: 'Admins', value: o.people.admins },
-                  { label: 'Auditors', value: o.people.auditors },
-                  { label: 'Suspended', value: o.people.suspended, tone: o.people.suspended > 0 ? 'warn' : undefined },
-                ]} />
-                <p className="rv-note">
-                  Each team has one admin. Per-team, per-admin and per-auditor figures are in the
-                  Organization sections — <Link to="/app/teams">Teams</Link>,{' '}
-                  <Link to="/app/admins">Admins</Link> and <Link to="/app/auditors">Auditors</Link>.
-                </p>
-              </section>
-            </div>
+            <h2 className="rv-section-title">Casework opened per month</h2>
+            <MonthlyThroughput data={o.byMonth} />
+
+            <p className="rv-note">
+              Each team has one admin. Per-team, per-admin and per-auditor figures are in{' '}
+              <Link to="/app/teams">Teams</Link>, <Link to="/app/admins">Admins</Link> and{' '}
+              <Link to="/app/auditors">Auditors</Link>.
+            </p>
           </>
         )}
       </div>

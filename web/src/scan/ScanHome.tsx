@@ -1,14 +1,23 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api, VERDICT_META, type ScanCapability, type ScanSummary, type VerdictOverall } from '../api';
+import { api, type ScanCapability, type ScanSummary } from '../api';
 import { useAsync } from '../components/common';
+import { IconImage, IconRefresh } from '../components/icons';
+import { ScanTable } from './ScanTable';
 
 // The first screen after sign-in: one action, what it will do, and what the
 // officer scanned before.
 //
-// The hero states the three steps before the officer commits to anything, because
-// the cost of a scan is walking to a shelf and photographing a packet — knowing
-// what happens next is worth more here than another button.
+// The three steps sit under the heading because the cost of a scan is walking to a
+// shelf and photographing a packet — knowing what happens next is worth more here
+// than a second button. Whether this device can actually produce an assessment is
+// stated on the same line, before the officer commits to the walk rather than after.
+
+const STEPS = [
+  { title: 'Photograph', hint: 'Capture every visible side' },
+  { title: 'Read', hint: 'Read the label text' },
+  { title: 'Check', hint: 'Review each declaration' },
+];
 
 export function ScanHome() {
   const nav = useNavigate();
@@ -17,8 +26,8 @@ export function ScanHome() {
   const all = recent.data?.scans ?? [];
   const scans = all.slice(0, 5);
   // Packages a reviewer has handed back. This is work assigned to this officer, so
-  // it sits above the scan button rather than below the fold — a re-check that is
-  // never noticed is the same as one that was never asked for.
+  // it sits above everything else — a re-check that is never noticed is the same as
+  // one that was never asked for.
   const needsRecheck = all.filter(
     (s) => s.review?.decision === 'recapture_requested' && !s.review.stale,
   );
@@ -35,89 +44,69 @@ export function ScanHome() {
     { ok: 0, bad: 0, review: 0 },
   );
   const ready = cap.data ? cap.data.rules.available && !cap.data.judge.isMock : null;
+  const sources = cap.data?.rules.sources.length ?? 0;
 
   return (
     <div className="field-page">
       {needsRecheck.length > 0 && (
         <section className="recheck-banner">
           <h2>
-            <span aria-hidden="true">↺</span>
+            <IconRefresh size={18} />
             {needsRecheck.length} product{needsRecheck.length === 1 ? '' : 's'} to check again
           </h2>
           <p>
             Your admin sent {needsRecheck.length === 1 ? 'this one' : 'these'} back — photograph
             the package again and send it for review.
           </p>
-          <ul className="scan-list">
-            {needsRecheck.map((s) => <ScanRow key={s.scanId} scan={s} />)}
-          </ul>
+          <ScanTable scans={needsRecheck} />
         </section>
       )}
 
-      <section className="scan-hero">
-        <div className="scan-hero-copy">
-          <span className="scan-hero-badge">
-            <span className="dot" aria-hidden="true" />
-            Legal Metrology (Packaged Commodities) Rules, 2011
-          </span>
+      <p className="field-eyebrow">Legal Metrology (Packaged Commodities) Rules, 2011</p>
+      <div className="page-head">
+        <div className="page-head-main">
           <h1>Check a product for compliance</h1>
-          <p>
-            Photograph the package. PackComply reads the label and checks it against the 2011 Rules,
-            then shows you exactly where each declaration was found — or was not.
-          </p>
-          <button className="scan-button" onClick={() => nav('/app/scan/new')}>
-            <span className="scan-button-ico" aria-hidden="true">
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
-                <path d="M3 8V5.5A1.5 1.5 0 014.5 4H8M16 4h3.5A1.5 1.5 0 0121 5.5V8M21 16v2.5a1.5 1.5 0 01-1.5 1.5H16M8 20H4.5A1.5 1.5 0 013 18.5V16"
-                  stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
-                <path d="M3 12h18" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
-              </svg>
-            </span>
-            Scan the product
-          </button>
-          <ol className="scan-steps">
-            <li><b>Photograph</b><span>One side is enough; more is better</span></li>
-            <li><b>Read</b><span>Text is lifted off the label</span></li>
-            <li><b>Check</b><span>Every mandatory declaration, cited</span></li>
-          </ol>
+          <p className="page-sub">Photograph the package. Review the declarations. Keep the evidence.</p>
         </div>
+        <div className="page-head-actions">
+          <button className="primary" onClick={() => nav('/app/scan/new')}>Scan the product</button>
+        </div>
+      </div>
 
-        <aside className="scan-hero-side">
-          <div className={`scan-status-card ${ready === null ? '' : ready ? 'ok' : 'warn'}`}>
-            <b>
-              {ready === null ? 'Checking this device…'
-                : ready ? 'Ready to scan' : 'Limited assessment'}
-            </b>
-            {cap.data && (
-              <ul>
-                <li className={cap.data.rules.available ? 'yes' : 'no'}>
-                  <span aria-hidden="true">{cap.data.rules.available ? '✓' : '✕'}</span>
-                  {cap.data.rules.available
-                    ? `Statutory text loaded (${cap.data.rules.sources.length} source${cap.data.rules.sources.length === 1 ? '' : 's'})`
-                    : 'Statutory text not loaded on this server'}
-                </li>
-                <li className={cap.data.judge.isMock ? 'no' : 'yes'}>
-                  <span aria-hidden="true">{cap.data.judge.isMock ? '✕' : '✓'}</span>
-                  {cap.data.judge.isMock
-                    ? 'No AI model configured — pattern matcher only'
-                    : `Assessed by ${cap.data.judge.modelVersion}`}
-                </li>
-              </ul>
+      <ol className="pc-steps">
+        {STEPS.map((s, i) => (
+          <React.Fragment key={s.title}>
+            {i > 0 && <li className="pc-step-line" aria-hidden="true" />}
+            <li className="pc-step off">
+              <span className="pc-step-num">{i + 1}</span>
+              <span className="pc-step-text"><b>{s.title}</b><small>{s.hint}</small></span>
+            </li>
+          </React.Fragment>
+        ))}
+      </ol>
+
+      <div className="ready-line">
+        <span className={`chip ${ready === null ? 'neutral' : ready ? 'passed' : 'needs_review'}`} role="status">
+          <span className="ico" aria-hidden="true">·</span>
+          {ready === null ? 'Checking this device…' : ready ? 'Ready to scan' : 'Limited assessment'}
+        </span>
+        {cap.data && (
+          <>
+            <span className="divider" aria-hidden="true" />
+            <span className="fact">
+              {cap.data.rules.available
+                ? `${sources} statutory source${sources === 1 ? '' : 's'} loaded`
+                : 'No statutory source loaded'}
+            </span>
+            {cap.data.judge.isMock && (
+              <>
+                <span className="divider" aria-hidden="true" />
+                <span className="fact">Pattern matcher only — no AI model configured</span>
+              </>
             )}
-          </div>
-
-          {scans.length > 0 && (
-            <div className="scan-tally-card">
-              <h2>Your last {scans.length} scan{scans.length === 1 ? '' : 's'}</h2>
-              <div className="scan-tally">
-                <div className="ok"><b>{tally.ok}</b><span>ready</span></div>
-                <div className="bad"><b>{tally.bad}</b><span>not ready</span></div>
-                <div className="warn"><b>{tally.review}</b><span>review</span></div>
-              </div>
-            </div>
-          )}
-        </aside>
-      </section>
+          </>
+        )}
+      </div>
 
       {cap.data && !cap.data.rules.available && (
         <p className="warn-box">
@@ -132,51 +121,32 @@ export function ScanHome() {
         </p>
       )}
 
-      <section className="field-panel">
-        <div className="field-panel-head">
-          <h2>Recent scans</h2>
-          <Link to="/app/history">View all</Link>
-        </div>
-        {recent.loading && <p className="muted">Loading…</p>}
-        {!recent.loading && scans.length === 0 && (
-          <div className="scan-empty">
-            <span aria-hidden="true">
-              <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
-                <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="1.6" />
-                <path d="M3 15l4.5-4.5L12 15l3-3 6 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </span>
-            <b>No scans yet</b>
-            <p>Scan a packet and it will appear here with its verdict and report.</p>
+      {scans.length > 0 && (
+        <>
+          <h2 className="section-title">Last {scans.length} scan{scans.length === 1 ? '' : 's'}</h2>
+          <div className="pc-stats">
+            <div className="pc-stat"><b>{tally.ok}</b><span>Ready</span></div>
+            <div className="pc-stat"><b>{tally.bad}</b><span>Not ready</span></div>
+            <div className="pc-stat"><b>{tally.review}</b><span>Needs review</span></div>
           </div>
-        )}
-        <ul className="scan-list">
-          {scans.map((s) => <ScanRow key={s.scanId} scan={s} />)}
-        </ul>
-      </section>
-    </div>
-  );
-}
+        </>
+      )}
 
-export function ScanRow({ scan }: { scan: ScanSummary }) {
-  const v = scan.verdict ? VERDICT_META[scan.verdict as VerdictOverall] : null;
-  const title = scan.brand || scan.genericName || 'Unnamed product';
-  return (
-    <li>
-      <Link to={`/app/scan/${scan.scanId}`} className="scan-row">
-        <span className={`chip ${v ? v.tone : 'neutral'}`}>
-          <span className="ico" aria-hidden="true">{v ? v.icon : '·'}</span>
-          {v ? v.label : scan.status === 'processing' ? 'Analysing' : 'Not analysed'}
-        </span>
-        <span className="scan-row-main">
-          <b>{title}</b>
-          <small>
-            {new Date(scan.createdAt).toLocaleString()} · {scan.imageCount} image{scan.imageCount === 1 ? '' : 's'}
-            {scan.verdictIsMock ? ' · rule engine only' : ''}
-          </small>
-        </span>
-        <span className="scan-row-go" aria-hidden="true">→</span>
-      </Link>
-    </li>
+      <h2 className="section-title">Recent scans</h2>
+      {recent.loading && <p className="muted">Loading…</p>}
+      {!recent.loading && scans.length === 0 && (
+        <div className="scan-empty">
+          <span aria-hidden="true"><IconImage size={30} /></span>
+          <b>No scans yet</b>
+          <p>Scan a packet and it will appear here with its assessment and report.</p>
+        </div>
+      )}
+      {scans.length > 0 && (
+        <>
+          <ScanTable scans={scans} />
+          <p style={{ margin: '18px 0 0' }}><Link to="/app/history">View all scans</Link></p>
+        </>
+      )}
+    </div>
   );
 }

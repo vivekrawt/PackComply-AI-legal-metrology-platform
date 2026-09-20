@@ -1,7 +1,9 @@
 import React from 'react';
-import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
-import { api, type User } from '../api';
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { api, ROLE_META, type User } from '../api';
 import { AuthContext } from '../App';
+import { WhoBadge } from '../components/common';
+import { ShieldMark } from '../components/icons';
 import { ScanHome } from './ScanHome';
 import { ScanCapture } from './ScanCapture';
 import { ScanResult } from './ScanResult';
@@ -12,31 +14,36 @@ import { ScanHistory } from './ScanHistory';
 // rule authoring, audit log, analytics, dispositions and the recycle bin are
 // authority a field officer does not hold, so showing them would only be noise
 // they cannot act on.
+//
+// Two tabs, because there are two things an officer does here: scan the next
+// package, or look up one they already scanned. A rail would imply more.
 
 export function ScanShell({ user }: { user: User }) {
   const nav = useNavigate();
+  const { pathname } = useLocation();
   const { refresh } = React.useContext(AuthContext);
   const logout = async () => { await api.post('/auth/logout'); refresh(); nav('/'); };
+  // Capturing a package and reading its result are both "Scan", so the tab stays
+  // lit for the whole flow rather than going dark the moment the officer starts.
+  const onScan = !pathname.startsWith('/app/history');
 
   return (
     <div className="field-app">
-      <header className="field-top">
-        <NavLink to="/app" className="field-brand" end>
-          <span className="field-logo" aria-hidden="true">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <path d="M12 3l7 2.5v5.2c0 4.5-3 8.2-7 9.8-4-1.6-7-5.3-7-9.8V5.5L12 3z" stroke="#fff" strokeWidth="1.8" strokeLinejoin="round" />
-              <path d="M9 11.6l2.1 2.1L15.3 9.5" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </span>
-          PackComply
+      <header className="pc-topbar">
+        <NavLink to="/app" className="pc-topbar-brand" end>
+          <span className="pc-mark"><ShieldMark /></span>
+          <span className="pc-wordmark">PackComply</span>
         </NavLink>
-        <nav className="field-nav" aria-label="Main">
-          <NavLink to="/app" end>Scan</NavLink>
+
+        <nav className="pc-tabs" aria-label="Main">
+          <NavLink to="/app" end className={onScan ? 'active' : undefined}
+            aria-current={onScan ? 'page' : undefined}>Scan</NavLink>
           <NavLink to="/app/history">History</NavLink>
         </nav>
-        <div className="field-who">
-          <span title={user.email}>{user.name}</span>
-          <button className="quiet" onClick={logout}>Sign out</button>
+
+        <div className="pc-topbar-end">
+          <WhoBadge name={user.name} role={ROLE_META[user.role]?.short ?? 'Field officer'} email={user.email} />
+          <button className="pc-signout" onClick={logout}>Sign out</button>
         </div>
       </header>
 

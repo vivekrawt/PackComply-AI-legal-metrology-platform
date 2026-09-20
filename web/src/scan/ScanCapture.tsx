@@ -2,6 +2,7 @@ import React from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, SIDE_LABELS, type Scan, type ScanCapability } from '../api';
 import { ErrorText, useAsync } from '../components/common';
+import { IconArrowLeft, IconCamera, IconImage, IconPlus, IconUpload } from '../components/icons';
 import { assetUrl } from './EvidenceViewer';
 import { SideCamera } from './SideCamera';
 
@@ -42,6 +43,11 @@ const emptySlot = (side: string): Slot => ({
   side, previewUrl: null, ownsPreview: false, assetId: null,
   uploading: false, removing: false, error: null,
 });
+
+// Capture is the first of three acts, and the other two are the machine's. Saying
+// so up front is the difference between "I am filling in a form" and "I am
+// producing the evidence something else will be judged on".
+const PHASES = ['Capture', 'Analyse', 'Review'];
 
 export function ScanCapture() {
   const nav = useNavigate();
@@ -210,32 +216,26 @@ export function ScanCapture() {
   if (phase === 'source') {
     return (
       <div className="field-page narrow">
-        <button className="link-back" onClick={() => nav('/app')}>← Back</button>
+        <button className="link-back" onClick={() => nav('/app')}><IconArrowLeft />Back</button>
         <h1>{addingTo ? 'Photograph this package again' : 'Scan the product'}</h1>
-        <p className="muted">How would you like to add the package images?</p>
+        <p className="page-sub">How would you like to add package images?</p>
+
         <div className="source-choice">
           <button onClick={() => { setSource('upload'); setPhase('capture'); }}>
-            <span className="source-ico" aria-hidden="true">
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
-                <path d="M12 16V4m0 0L8 8m4-4l4 4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"
-                  stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </span>
-            <b>Upload the image</b>
+            <span className="source-ico"><IconUpload /></span>
+            <b>Upload images</b>
             <small>Choose photos already on this device</small>
           </button>
           <button onClick={() => { setSource('camera'); setPhase('capture'); }}>
-            <span className="source-ico" aria-hidden="true">
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
-                <path d="M4 8h3l1.4-2h7.2L17 8h3a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1z"
-                  stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-                <circle cx="12" cy="13" r="3.4" stroke="currentColor" strokeWidth="1.8" />
-              </svg>
-            </span>
-            <b>Click image using the camera</b>
+            <span className="source-ico"><IconCamera /></span>
+            <b>Use camera</b>
             <small>Photograph the package now</small>
           </button>
         </div>
+
+        <p className="note-line">
+          One image is enough to start. More sides give a fuller assessment.
+        </p>
       </div>
     );
   }
@@ -243,17 +243,25 @@ export function ScanCapture() {
   // ---- Capture --------------------------------------------------------------
   return (
     <div className="field-page narrow">
-      <button className="link-back" onClick={() => nav('/app')}>← Back</button>
+      <button className="link-back" onClick={() => nav('/app')}><IconArrowLeft />Back</button>
       <h1>Capture the package</h1>
-      <p className="muted">
-        Add a photo for each side you can see. <b>At least {minImages} image
-        {minImages === 1 ? ' is' : 's are'} required</b>, but every extra side helps: a declaration
-        on a face that was never photographed cannot be assessed. Fill the slots on screen and
-        another one appears, up to {maxImages} images for this package.
-      </p>
+      <p className="page-sub">Add clear photos of every visible side.</p>
 
-      <label className="field">Product or brand name <span className="optional">(optional)</span>
-        <input value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="Helps identify the scan later" />
+      <ol className="pc-steps" style={{ justifyContent: 'center' }}>
+        {PHASES.map((label, i) => (
+          <React.Fragment key={label}>
+            {i > 0 && <li className="pc-step-line" aria-hidden="true" />}
+            <li className={`pc-step ${i === 0 ? 'on' : 'off'}`} aria-current={i === 0 ? 'step' : undefined}>
+              <span className="pc-step-num">{i + 1}</span>
+              <span className="pc-step-text"><b>{label}</b></span>
+            </li>
+          </React.Fragment>
+        ))}
+      </ol>
+
+      <label className="field" style={{ marginTop: 28 }}>
+        Product or brand name <span className="optional">(optional)</span>
+        <input value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="Helps identify this scan later" />
       </label>
 
       <div className="side-grid">
@@ -271,28 +279,25 @@ export function ScanCapture() {
             {slot.previewUrl ? (
               <img src={slot.previewUrl} alt={`${SIDE_LABELS[slot.side] ?? slot.side} of the package`} />
             ) : (
-              <div className="side-slot-empty" aria-hidden="true">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-                  <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="1.7" />
-                  <path d="M3 15l4.5-4.5L12 15l3-3 6 6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </div>
+              <span className="side-slot-empty" aria-hidden="true"><IconImage size={24} /></span>
             )}
 
             {slot.error && <p className="slot-error" role="alert">{slot.error}</p>}
 
             <div className="side-slot-actions">
               {source === 'camera' ? (
-                <button className="secondary" onClick={() => setCameraFor(slot.side)} disabled={slot.uploading || slot.removing}>
+                <button className="link-btn" onClick={() => setCameraFor(slot.side)} disabled={slot.uploading || slot.removing}>
                   {slot.assetId ? 'Retake' : 'Take photo'}
                 </button>
               ) : (
-                <button className="secondary" onClick={() => fileInputs.current[slot.side]?.click()} disabled={slot.uploading || slot.removing}>
+                <button className="link-btn" onClick={() => fileInputs.current[slot.side]?.click()} disabled={slot.uploading || slot.removing}>
                   {slot.assetId ? 'Replace' : 'Choose image'}
                 </button>
               )}
               {(slot.assetId || slot.error) && (
-                <button className="quiet" onClick={() => clearSlot(slot.side)} disabled={slot.uploading || slot.removing}>Remove</button>
+                <button className="link-btn remove" onClick={() => clearSlot(slot.side)} disabled={slot.uploading || slot.removing}>
+                  Remove
+                </button>
               )}
             </div>
 
@@ -310,26 +315,28 @@ export function ScanCapture() {
       </div>
 
       {roomLeft && (
-        <button className="secondary wide" onClick={addAnotherSide}>+ Add another side image</button>
+        <div className="add-side">
+          <button className="secondary" onClick={addAnotherSide}><IconPlus />Add another side</button>
+          <small>Up to {maxImages} images per package</small>
+        </div>
       )}
 
-      <div className={`capture-status ${captured >= minImages ? 'ok' : ''}`} role="status">
-        {captured === 0
-          ? `Add at least ${minImages} image to analyse this package.`
-          : captured < minImages
-            ? `${captured} of ${minImages} required images captured.`
-            : captured >= maxImages
-              ? `${captured} images captured — the most one package can carry. Ready to analyse.`
-              : captured === 1
-                ? '1 image captured — ready to analyse. Adding more sides gives a fuller assessment.'
-                : `${captured} of ${maxImages} images captured — ready to analyse.`}
-      </div>
+      <p className="note-line" role="status">
+        {captured >= minImages
+          ? 'Declarations on uncaptured sides cannot be assessed — add any side you can still see.'
+          : `At least ${minImages} image${minImages === 1 ? ' is' : 's are'} required. Declarations on uncaptured sides cannot be assessed.`}
+      </p>
 
       <ErrorText error={error} />
 
-      <button className="primary big" disabled={!canAnalyze || phase === 'sending'} onClick={analyze}>
-        {phase === 'sending' ? 'Starting analysis…' : 'Analyse for compliance'}
-      </button>
+      <div className="capture-foot">
+        <span className={`count ${canAnalyze ? 'ready' : ''}`}>
+          {captured} of {maxImages} images added
+        </span>
+        <button className="primary" disabled={!canAnalyze || phase === 'sending'} onClick={analyze}>
+          {phase === 'sending' ? 'Starting analysis…' : 'Analyse for compliance'}
+        </button>
+      </div>
 
       {cameraFor && (
         <SideCamera
