@@ -3,32 +3,44 @@ import type { AuditorPeriods, PeriodStats, ScanStats } from '../api';
 
 // Shared presentation for the console's numbers.
 //
-// A deliberate constraint runs through this file: the app's status colours (teal /
-// red / amber / blue) are safe as STATUS, where every one of them carries an icon
-// and a word, but they fail as a categorical chart palette — amber and red are
-// ΔE 0.8 apart under deuteranopia and 12.3 apart even in normal vision. So nothing
-// here distinguishes two quantities by colour alone: tiles are labelled, and the
-// one time-series uses a single hue against a neutral track.
+// A deliberate constraint runs through this file: the app's status colours (green /
+// red / amber / blue) are safe as STATUS, where every one of them carries a word,
+// but they fail as a categorical chart palette — amber and red are ΔE 0.8 apart
+// under deuteranopia and 12.3 apart even in normal vision. So nothing here
+// distinguishes two quantities by colour alone: tiles are labelled, and the one
+// time-series separates its two series by position as well as by hue.
 
 export const fmtWhen = (iso: string | null) =>
-  (iso ? new Date(iso).toLocaleString() : '—');
+  (iso ? new Date(iso).toLocaleString(undefined, {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  }) : '—');
 export const fmtDay = (iso: string | null) =>
-  (iso ? new Date(iso).toLocaleDateString() : '—');
+  (iso ? new Date(iso).toLocaleDateString(undefined, {
+    day: '2-digit', month: 'short', year: 'numeric',
+  }) : '—');
 
 export interface Tile {
   label: string;
   value: number | string;
   tone?: 'ok' | 'bad' | 'warn' | 'awaiting';
   hint?: string;
+  // Only where the row counts different kinds of thing — people, teams — and the
+  // glyph does the sorting the eye would otherwise do by reading every label.
+  icon?: React.ReactNode;
 }
 
-export function StatTiles({ tiles }: { tiles: Tile[] }) {
+// Big number over its label, divided by hairlines: one sentence about a body of
+// work, rather than a row of cards competing to be read first.
+export function StatTiles({ tiles, plain }: { tiles: Tile[]; plain?: boolean }) {
   return (
-    <div className="rv-stats">
+    <div className={`rv-stats${plain ? ' plain' : ''}`}>
       {tiles.map((t) => (
-        <div key={t.label} className={`rv-stat ${t.tone ?? ''}`} title={t.hint}>
-          <b>{t.value}</b>
-          <span>{t.label}</span>
+        <div key={t.label} className={`rv-stat ${t.tone ?? ''} ${t.icon ? 'iconed' : ''}`} title={t.hint}>
+          {t.icon && <span className="rv-stat-ico" aria-hidden="true">{t.icon}</span>}
+          <div>
+            <b>{t.value}</b>
+            <span>{t.label}</span>
+          </div>
         </div>
       ))}
     </div>
@@ -41,11 +53,11 @@ export function scanStatTiles(s: ScanStats): Tile[] {
   return [
     { label: 'Cases', value: s.total, hint: 'Every scan captured' },
     { label: 'In progress', value: s.inProgress, hint: 'Captured but not yet analysed' },
-    { label: 'Awaiting review', value: s.awaitingReview, tone: 'awaiting', hint: 'Analysed, no decision yet' },
+    { label: 'Awaiting', value: s.awaitingReview, tone: 'awaiting', hint: 'Analysed, no decision yet' },
     { label: 'Accepted', value: s.accepted, tone: 'ok' },
     { label: 'Rejected', value: s.rejected, tone: 'bad' },
     { label: 'Sent back', value: s.sentBack, tone: 'warn' },
-    { label: 'Referred up', value: s.escalated, hint: 'Passed to a super administrator to decide' },
+    { label: 'Referred', value: s.escalated, hint: 'Passed to a super administrator to decide' },
   ];
 }
 
@@ -57,9 +69,8 @@ const PERIOD_LABELS: { key: keyof AuditorPeriods; label: string }[] = [
   { key: 'month', label: 'This month' },
 ];
 
-export function PeriodPanel({ periods }: { periods: AuditorPeriods }) {
+export function PeriodPanel({ periods, detail }: { periods: AuditorPeriods; detail?: boolean }) {
   const cols: { key: keyof PeriodStats; label: string }[] = [
-    { key: 'completed', label: 'Completed' },
     { key: 'captured', label: 'Captured' },
     { key: 'accepted', label: 'Accepted' },
     { key: 'rejected', label: 'Rejected' },
@@ -74,13 +85,15 @@ export function PeriodPanel({ periods }: { periods: AuditorPeriods }) {
             <h3>{label}</h3>
             <b className="rv-period-hero">{p.completed}</b>
             <span className="rv-period-hero-label">completed</span>
-            <dl>
-              {cols.slice(1).map((c) => (
-                <React.Fragment key={c.key}>
-                  <dt>{c.label}</dt><dd>{p[c.key]}</dd>
-                </React.Fragment>
-              ))}
-            </dl>
+            {detail && (
+              <dl>
+                {cols.map((c) => (
+                  <React.Fragment key={c.key}>
+                    <dt>{c.label}</dt><dd>{p[c.key]}</dd>
+                  </React.Fragment>
+                ))}
+              </dl>
+            )}
           </div>
         );
       })}
@@ -104,9 +117,10 @@ export function StatusChip({ status }: { status: string }) {
     : status === 'suspended' ? 'failed'
       : status === 'offboarded' ? 'not_applicable' : 'needs_review';
   const icon = status === 'active' ? '✓' : status === 'suspended' ? '⊘' : '—';
+  const label = status.charAt(0).toUpperCase() + status.slice(1);
   return (
     <span className={`chip ${tone}`}>
-      <span className="ico" aria-hidden="true">{icon}</span>{status}
+      <span className="ico" aria-hidden="true">{icon}</span>{label}
     </span>
   );
 }
@@ -114,63 +128,80 @@ export function StatusChip({ status }: { status: string }) {
 // Casework opened per month, and how much of it has been decided.
 //
 // Two series, so a legend is present; they are separated by hue AND by position
-// (decided sits at the base of its own column), and every column carries its month
-// under it. A table view sits behind the disclosure for anyone the bars fail.
+// (each month's pair sits side by side in a fixed order), and every column carries
+// its month under it. A table view sits behind the disclosure for anyone the bars
+// fail — including a screen reader, which gets the numbers rather than a picture.
 export function MonthlyThroughput({ data }: {
   data: { month: string; total: number; decided: number }[];
 }) {
   const rows = [...data].reverse(); // server returns newest first; read left to right
   if (rows.length === 0) return <p className="muted">No casework recorded yet.</p>;
-  const max = Math.max(...rows.map((r) => r.total), 1);
+
+  const peak = Math.max(...rows.map((r) => r.total), 1);
+  // A round ceiling, so the gridline labels are numbers a reader recognises.
+  const step = peak <= 5 ? 1 : peak <= 15 ? 5 : Math.ceil(peak / 15) * 5;
+  const top = Math.ceil(peak / step) * step;
+  const lines = Array.from({ length: top / step + 1 }, (_, i) => i * step).reverse();
 
   return (
     <figure className="rv-chart">
+      <div className="rv-plot">
+        {lines.map((value) => (
+          <div
+            key={value} className="rv-grid-line" aria-hidden="true"
+            style={{ top: `${(1 - value / top) * 150}px` }}
+          >
+            <span>{value}</span>
+          </div>
+        ))}
+        <div
+          className="rv-bars"
+          role="img"
+          aria-label={`Cases opened per month over ${rows.length} months, with the decided share of each.`}
+        >
+          {rows.map((r) => (
+            <div className="rv-bar-col" key={r.month}>
+              <div className="rv-bar-stack" title={`${r.month}: ${r.total} opened, ${r.decided} decided`}>
+                <span className="rv-bar-decided" style={{ height: `${(r.decided / top) * 100}%` }} />
+                <span className="rv-bar-open" style={{ height: `${((r.total - r.decided) / top) * 100}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="rv-months" aria-hidden="true">
+          {rows.map((r) => <small key={r.month}>{monthLabel(r.month)}</small>)}
+        </div>
+      </div>
+
       <figcaption>
         <span className="rv-legend">
           <span className="rv-legend-item"><i className="sw decided" />Decided</span>
           <span className="rv-legend-item"><i className="sw open" />Still open</span>
         </span>
       </figcaption>
-      <div
-        className="rv-bars"
-        role="img"
-        aria-label={`Cases opened per month over ${rows.length} months, with the decided share of each.`}
-      >
-        {rows.map((r) => {
-          const colH = (r.total / max) * 100;
-          const decidedShare = r.total > 0 ? (r.decided / r.total) * 100 : 0;
-          return (
-            <div className="rv-bar-col" key={r.month}>
-              <div
-                className="rv-bar-stack"
-                style={{ height: `${Math.max(colH, r.total > 0 ? 4 : 0)}%` }}
-                title={`${r.month}: ${r.total} opened, ${r.decided} decided`}
-              >
-                {/* Each segment renders only when it has a value, so the 2px surface
-                    gap between them never shows as a notch on a single-segment bar. */}
-                {decidedShare < 100 && (
-                  <span className="rv-bar-open" style={{ height: `${100 - decidedShare}%` }} />
-                )}
-                {decidedShare > 0 && (
-                  <span className="rv-bar-decided" style={{ height: `${decidedShare}%` }} />
-                )}
-              </div>
-              <small>{r.month.slice(5)}</small>
-            </div>
-          );
-        })}
-      </div>
+
       <details className="rv-table-view">
         <summary>Show as a table</summary>
-        <table className="data">
-          <thead><tr><th>Month</th><th>Opened</th><th>Decided</th></tr></thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.month}><td>{r.month}</td><td>{r.total}</td><td>{r.decided}</td></tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="table-wrap">
+          <table className="data">
+            <thead><tr><th>Month</th><th className="num">Opened</th><th className="num">Decided</th></tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.month}><td>{r.month}</td><td className="num">{r.total}</td><td className="num">{r.decided}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </details>
     </figure>
   );
+}
+
+// "2026-09" reads as a month, not as a number, once it carries its name.
+function monthLabel(month: string) {
+  const [y, m] = month.split('-');
+  const d = new Date(Number(y), Number(m) - 1, 1);
+  return Number.isNaN(d.getTime())
+    ? month
+    : d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
 }

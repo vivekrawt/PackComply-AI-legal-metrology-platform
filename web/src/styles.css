@@ -171,6 +171,8 @@ td.go::after { content: "\203A"; font-size: 1.15rem; line-height: 1; }
   color: var(--ink-strong); letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
 }
 .rv-stat span, .pc-stat span { font-size: 0.83rem; color: var(--ink-soft); }
+.rv-stat.iconed { display: flex; align-items: center; gap: 13px; }
+.rv-stat-ico { color: var(--ink-faint); flex-shrink: 0; display: inline-flex; }
 /* Tone colours the number only, and only where the number is the point. */
 .rv-stat.awaiting b { color: var(--blue); }
 .rv-stat.bad b { color: var(--red-ink); }
